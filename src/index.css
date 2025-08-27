@@ -1,68 +1,119 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@import "tailwindcss";
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* Base tokens for Tailwind (default = purple theme) */
+@theme {
+  --color-brand-primary: #7C3AED;
+  --color-brand-fuchsia: #D946EF;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+/* Runtime theme switching using data-theme on <html> */
+:root,
+[data-theme="purple"] {
+  --color-brand-primary: #7C3AED; /* Purple */
+  --color-brand-fuchsia: #D946EF;
+  /* UI tuning defaults */
+  --brand-angle: 90deg;
+  --glow-color: var(--color-brand-primary);
+  --glow-a1: 65%; /* inner inset */
+  --glow-a2: 55%; /* soft */
+  --glow-a3: 35%; /* outer */
+  --glow-soft-blur: 22px;
+  --glow-outer-blur: 32px;
+  --glow-spread: 6px;
 }
-a:hover {
-  color: #535bf2;
+[data-theme="blue"] {
+  --color-brand-primary: #2563EB; /* Blue */
+  --color-brand-fuchsia: #06B6D4; /* Cyan accent */
+}
+[data-theme="emerald"] {
+  --color-brand-primary: #10B981; /* Emerald */
+  --color-brand-fuchsia: #34D399; /* Light emerald */
+}
+[data-theme="amber"] {
+  --color-brand-primary: #F59E0B; /* Amber */
+  --color-brand-fuchsia: #F97316; /* Orange */
+}
+[data-theme="rose"] {
+  --color-brand-primary: #E11D48; /* Rose */
+  --color-brand-fuchsia: #F43F5E; /* Rose light */
+}
+[data-theme="indigo"] {
+  --color-brand-primary: #4F46E5; /* Indigo */
+  --color-brand-fuchsia: #6366F1; /* Indigo light */
+}
+[data-theme="teal"] {
+  --color-brand-primary: #14B8A6; /* Teal */
+  --color-brand-fuchsia: #06B6D4; /* Cyan accent */
 }
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+/* App background: subtle radial gradient with dark base (uses theme vars) */
+.bg-app {
+  background:
+    radial-gradient(1200px 700px at 10% -10%, color-mix(in srgb, var(--color-brand-primary) 25%, transparent), transparent 60%),
+    radial-gradient(900px 600px at 110% 10%, color-mix(in srgb, var(--color-brand-fuchsia) 20%, transparent), transparent 55%),
+    linear-gradient(180deg, #0B1220 0%, #0A0F1A 100%);
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Sidebar gradient surface with customizable angle */
+.sidebar-surface {
+  background: linear-gradient(var(--brand-angle), color-mix(in srgb, var(--color-brand-primary) 85%, transparent), color-mix(in srgb, var(--color-brand-fuchsia) 75%, transparent));
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+/* Glassmorphism surface */
+.glass {
+  background: rgba(17, 25, 40, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* 3D card look with soft rim-light */
+.card-3d {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 8px 24px rgba(2,6,23,0.45), 0 2px 0 rgba(255,255,255,0.04) inset;
+}
+
+/* Neon glow for active items/buttons (uses theme vars) */
+.glow {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--glow-color) var(--glow-a1), transparent) inset,
+    0 6px var(--glow-soft-blur) 0 color-mix(in srgb, var(--glow-color) var(--glow-a2), transparent),
+    0 0 var(--glow-outer-blur) var(--glow-spread) color-mix(in srgb, var(--color-brand-fuchsia) var(--glow-a3), transparent);
+}
+
+/* Gradient pill for active sidebar link */
+.pill-active {
+  background: linear-gradient(var(--brand-angle), var(--color-brand-primary), var(--color-brand-fuchsia));
+  color: white;
+}
+
+/* Minimal thin scrollbar */
+.thin-scrollbar::-webkit-scrollbar { width: 8px; }
+.thin-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 999px; }
+.thin-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.25) transparent; }
+
+/* Hide scrollbar but keep scrolling */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Distinct Logout button styling */
+.btn-logout {
+  background: linear-gradient(90deg, #f43f5e 0%, #ef4444 50%, #f97316 100%);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.16);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.55) inset,
+              0 10px 28px rgba(239,68,68,0.45),
+              0 0 36px rgba(249,115,22,0.35);
+  transition: transform 120ms ease, filter 120ms ease, box-shadow 200ms ease;
+}
+.btn-logout:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.65) inset,
+              0 12px 34px rgba(239,68,68,0.55),
+              0 0 44px rgba(249,115,22,0.45);
+}
+.btn-logout:active {
+  transform: translateY(0);
 }
