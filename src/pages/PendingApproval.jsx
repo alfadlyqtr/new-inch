@@ -45,9 +45,19 @@ export default function PendingApproval() {
         const name = latestRow?.owner_name || latestRow?.full_name || latestRow?.staff_name || ""
         setDisplayName(name)
         if (anyApproved) {
-          setApprovedNow(true)
           try { await supabase.auth.refreshSession() } catch {}
-          setTimeout(() => navigate("/dashboard", { replace: true }), 600)
+          // Determine destination based on role and business linkage
+          const { data: meta } = await supabase
+            .from('users_app')
+            .select('is_business_owner, business_id')
+            .eq('auth_user_id', authUser.id)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          const owner = !!meta?.is_business_owner
+          const hasBiz = !!meta?.business_id
+          const dest = owner && !hasBiz ? '/setup' : '/dashboard'
+          setTimeout(() => navigate(dest, { replace: true }), 600)
           return
         }
 
@@ -57,11 +67,15 @@ export default function PendingApproval() {
           .on(
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'users_app', filter: `auth_user_id=eq.${authUser.id}` },
-            (payload) => {
+            async (payload) => {
               const next = payload?.new
               if (next && next.is_approved) {
+                try { await supabase.auth.refreshSession() } catch {}
+                const owner = !!next.is_business_owner
+                const hasBiz = !!next.business_id
+                const dest = (!hasBiz) ? '/setup' : '/dashboard'
                 setApprovedNow(true)
-                setTimeout(() => navigate("/dashboard", { replace: true }), 800)
+                setTimeout(() => navigate(dest, { replace: true }), 800)
               }
             }
           )
@@ -98,9 +112,18 @@ export default function PendingApproval() {
           .limit(1)
           .maybeSingle()
         if (anyApproved) {
-          setApprovedNow(true)
           try { await supabase.auth.refreshSession() } catch {}
-          setTimeout(() => navigate("/dashboard", { replace: true }), 600)
+          const { data: meta } = await supabase
+            .from('users_app')
+            .select('is_business_owner, business_id')
+            .eq('auth_user_id', authUser.id)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          const owner = !!meta?.is_business_owner
+          const hasBiz = !!meta?.business_id
+          const dest = owner && !hasBiz ? '/setup' : '/dashboard'
+          setTimeout(() => navigate(dest, { replace: true }), 600)
         }
       } catch {}
     }, 5000)
@@ -126,9 +149,18 @@ export default function PendingApproval() {
         .maybeSingle()
       if (error) throw error
       if (anyApproved) {
-        setApprovedNow(true)
         try { await supabase.auth.refreshSession() } catch {}
-        setTimeout(() => navigate("/dashboard", { replace: true }), 600)
+        const { data: meta } = await supabase
+          .from('users_app')
+          .select('is_business_owner, business_id')
+          .eq('auth_user_id', authUser.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const owner = !!meta?.is_business_owner
+        const hasBiz = !!meta?.business_id
+        const dest = owner && !hasBiz ? '/setup' : '/dashboard'
+        setTimeout(() => navigate(dest, { replace: true }), 600)
       }
     } catch (_e) {
       // optionally surface error

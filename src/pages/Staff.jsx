@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { supabase } from "../lib/supabaseClient.js"
 import StaffForm from "./staff/StaffForm.jsx"
+import { ensureCompletePermissions, ORDERED_MODULES } from "./staff/staff-permissions-defaults.js"
+import StaffDetails from './staff/StaffDetails.jsx'
 
 export default function Staff() {
   const [loading, setLoading] = useState(true)
@@ -16,6 +18,9 @@ export default function Staff() {
   const [viewOpen, setViewOpen] = useState(false)
   const [selected, setSelected] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [selectedStaffLoading, setSelectedStaffLoading] = useState(false)
+  const [selectedStaffDocs, setSelectedStaffDocs] = useState([])
 
   // business codes state
   const [codes, setCodes] = useState([])
@@ -71,6 +76,76 @@ export default function Staff() {
       } finally {
         if (!cancelled) setLoading(false)
       }
+
+  // Load detailed staff profile from 'staff' table for the selected user (by email + business_id)
+  async function loadSelectedStaffProfile(sel, bizId) {
+    if (!sel || !bizId) return
+    const email = sel?.email?.trim()
+    const maybeStaffId = sel?.staff_id || sel?.staffId || null
+    setSelectedStaffLoading(true)
+    try {
+      // Try by staff_id first if available, otherwise by email
+      let data = null, error = null
+      if (maybeStaffId) {
+        const res = await supabase
+          .from('staff')
+          .select('*')
+          .eq('business_id', bizId)
+          .eq('id', maybeStaffId)
+          .maybeSingle()
+        data = res.data; error = res.error
+      }
+      if ((!data && !error) && email) {
+        const res2 = await supabase
+          .from('staff')
+          .select('*')
+          .eq('business_id', bizId)
+          .eq('email', email)
+          .maybeSingle()
+        data = res2.data; error = res2.error
+      }
+      if (error) throw error
+      const normalized = data ? {
+        ...data,
+        permissions: ensureCompletePermissions(data.permissions || {}),
+      } : null
+      setSelectedStaff(normalized)
+      console.log('[StaffDetails] loaded staff profile', { email, bizId, staff_id: maybeStaffId, found: !!data })
+
+      // Load documents if we have a staff id
+      if (data?.id) {
+        const { data: docs, error: docErr } = await supabase
+          .from('staff_documents')
+          .select('id, type, file_url, verified, issued_on, expires_on, extracted')
+          .eq('staff_id', data.id)
+          .order('id', { ascending: false })
+        if (!docErr) setSelectedStaffDocs(docs || [])
+        else setSelectedStaffDocs([])
+
+        // Backfill users_app.staff_id if missing
+        try {
+          if (!maybeStaffId && email) {
+            const { error: linkErr } = await supabase
+              .from('users_app')
+              .update({ staff_id: data.id })
+              .eq('business_id', bizId)
+              .eq('email', email)
+            if (linkErr) console.warn('[StaffDetails] users_app.staff_id backfill failed (non-fatal)', linkErr)
+          }
+        } catch (ee) {
+          console.warn('[StaffDetails] users_app.staff_id backfill threw (non-fatal)', ee)
+        }
+      } else {
+        setSelectedStaffDocs([])
+      }
+    } catch (e) {
+      console.error('[StaffDetails] loadSelectedStaffProfile error', e)
+      setSelectedStaff(null)
+      setSelectedStaffDocs([])
+    } finally {
+      setSelectedStaffLoading(false)
+    }
+  }
 
     })()
     return () => { cancelled = true }
@@ -358,7 +433,7 @@ export default function Staff() {
                   <div className="mt-4 flex items-center gap-2">
                     <button
                       className="flex-1 px-3 py-1.5 rounded-md text-xs pill-active glow"
-                      onClick={() => { setSelected(m); setViewOpen(true) }}
+                      onClick={() => { setSelected(m); setViewOpen(true); loadSelectedStaffProfile(m, businessId) }}
                     >View</button>
                     <button title="More" className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs">⋯</button>
                   </div>
@@ -515,7 +590,13 @@ export default function Staff() {
           <div className="relative glass rounded-2xl border border-white/10 p-6 w-full max-w-lg">
             <div className="flex items-center justify-between">
               <div className="text-white/90 text-lg font-semibold">Staff Details</div>
-              <button onClick={() => setViewOpen(false)} className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs">Close</button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadSelectedStaffProfile(selected, businessId)}
+                  className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px]"
+                >{selectedStaffLoading ? 'Loading…' : 'Reload'}</button>
+                <button onClick={() => setViewOpen(false)} className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs">Close</button>
+              </div>
             </div>
             <div className="mt-4 flex items-start gap-4">
               <div className="h-12 w-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-sm text-white/90">
@@ -540,6 +621,26 @@ export default function Staff() {
                     <div className="text-xs text-slate-400">Joined</div>
                     <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10">{selected.created_at ? new Date(selected.created_at).toLocaleString() : '—'}</div>
                   </div>
+                </div>
+                {/* Staff Profile from 'staff' table */}
+                <div className="mt-4">
+                  <div className="text-xs text-slate-400 mb-2">Staff Profile (from staff table)</div>
+                  {selectedStaffLoading && (
+                    <div className="text-xs text-slate-400">Loading profile…</div>
+                  )}
+                  {!selectedStaffLoading && !selectedStaff && (
+                    <div className="text-xs text-slate-400">No staff profile found for this email. Create via Invite New Staff.</div>
+                  )}
+                  {!selectedStaffLoading && selectedStaff && (
+                    <StaffDetails
+                      user={selected}
+                      staff={selectedStaff}
+                      docs={selectedStaffDocs}
+                      loading={selectedStaffLoading}
+                      onReload={() => loadSelectedStaffProfile(selected, selected?.business_id)}
+                      onClose={() => setViewOpen(false)}
+                    />
+                  )}
                 </div>
                 <div className="mt-4 flex items-center justify-end gap-2">
                   <button className="px-3 py-1.5 rounded-md text-xs bg-white/10" onClick={()=>setViewOpen(false)}>Close</button>

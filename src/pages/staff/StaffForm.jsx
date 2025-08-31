@@ -271,6 +271,20 @@ export default function StaffForm({ businessId, onClose, onCreated }) {
         .single()
       if (error) throw error
 
+      // Link back to users_app so UI can resolve by staff_id (prefer strong linkage over email-only)
+      try {
+        if (dataToSave.email) {
+          const { error: linkErr } = await supabase
+            .from('users_app')
+            .update({ staff_id: inserted.id })
+            .eq('business_id', businessId)
+            .eq('email', dataToSave.email)
+          if (linkErr) console.warn('users_app.staff_id link failed (non-fatal)', linkErr)
+        }
+      } catch (ee) {
+        console.warn('users_app.staff_id link threw (non-fatal)', ee)
+      }
+
       // insert staff_documents for uploaded files, if any (best-effort)
       if (uploadedDocs.length) {
         try {
