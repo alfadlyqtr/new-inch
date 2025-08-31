@@ -104,7 +104,7 @@ export default function Dashboard() {
           <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
         </div>
         {/* Owner (kept at the far right) */}
-        <div className="ml-auto text-xs text-slate-300">{ownerName || "—"} <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner" : "Account"}</span></div>
+        <div className="ml-auto text-xs text-slate-300">{ownerName || "—"} <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span></div>
       </div>
 
       {/* Stats */}

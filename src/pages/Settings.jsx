@@ -17,6 +17,9 @@ const IconShield = (props) => (
 const IconSparkle = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={props.className || "w-3.5 h-3.5"}><path d="M12 3 9.5 9.5 3 12l6.5 2.5L12 21l2.5-6.5L21 12l-6.5-2.5L12 3Zm6-1 1 2.5L21 5l-2 .5L18.5 8 17 5.5 14.5 5 17 4.5 18 2Z"/></svg>
 )
+const IconUser = (props) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={props.className || "w-3.5 h-3.5"}><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.418 0-8 2.239-8 5v1h16v-1c0-2.761-3.582-5-8-5Z"/></svg>
+)
 
 export default function Settings() {
   // Backend-wired state
@@ -32,6 +35,21 @@ export default function Settings() {
   const logoInputRef = useRef(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
 
+  // User settings tab state
+  const [userDisplayName, setUserDisplayName] = useState("")
+  const [userLang, setUserLang] = useState("en")
+  const [avatarUrl, setAvatarUrl] = useState("")
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const avatarInputRef = useRef(null)
+  const [newEmail, setNewEmail] = useState("")
+  const [changingEmail, setChangingEmail] = useState(false)
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [userNotice, setUserNotice] = useState("")
+  const [userError, setUserError] = useState("")
+  const [savingUserProfile, setSavingUserProfile] = useState(false)
+
   // Invoice (from public.user_settings.invoice_settings jsonb)
   const [taxRate, setTaxRate] = useState(0)
   const [currency, setCurrency] = useState("KWD (د.ك) - Kuwaiti Dinar")
@@ -46,6 +64,7 @@ export default function Settings() {
 
   const tabs = [
     { id: "business", label: "Business", Icon: IconBriefcase },
+    { id: "user", label: "User Settings", Icon: IconUser },
     { id: "invoice", label: "Invoice", Icon: IconReceipt },
     { id: "notifications", label: "Notifications", Icon: IconBell },
     { id: "security", label: "Security", Icon: IconShield },
@@ -61,6 +80,9 @@ export default function Settings() {
   const [glowDepth, setGlowDepth] = useState(60) // 0..100
   const [savingAppearance, setSavingAppearance] = useState(false)
   const [appearanceNotice, setAppearanceNotice] = useState("")
+
+  // Local storage key helper to ensure per-user scoping (avoid global bleed between users)
+  const getLsKey = (k) => (userRow?.id ? `u:${userRow.id}:${k}` : k)
 
   // One-time load from backend
   useEffect(() => {
@@ -88,6 +110,14 @@ export default function Settings() {
         const user = usersAppRows
         if (cancelled) return
         setUserRow(user)
+        // Initialize User Settings state
+        const initialName = user.is_business_owner ? (user.owner_name || user.full_name || "") : (user.staff_name || user.full_name || "")
+        setUserDisplayName(initialName)
+        try {
+          const { data: s } = await supabase.auth.getSession()
+          const authEmail = s?.session?.user?.email || ""
+          setNewEmail(authEmail)
+        } catch { setNewEmail("") }
         // Show Business ID immediately from users_app
         if (user.business_id) setBusinessId(user.business_id)
 
@@ -148,6 +178,10 @@ export default function Settings() {
             const gd = Number.isFinite(glow.depth) ? glow.depth : 60
             setGlowMode(gm); setGlowColor(gc); setGlowDepth(gd); applyGlow(gm, gc, gd)
           }
+          // Hydrate user profile preferences
+          const profile = settings.user_profile || {}
+          if (profile.language) setUserLang(profile.language)
+          if (profile.avatar_url) setAvatarUrl(profile.avatar_url)
         } else {
           // Ensure settings row exists
           await supabase.from("user_settings").insert({ user_id: user.id })
@@ -163,6 +197,8 @@ export default function Settings() {
 
   async function saveBusiness() {
     if (!userRow || !userRow.business_id) return
+    // Only business owners can save
+    if (!userRow.is_business_owner) return
     await supabase
       .from("business")
       .update({
@@ -175,6 +211,126 @@ export default function Settings() {
     // Keep users_app.owner_name in sync if provided
     if (ownerNameInput && ownerNameInput !== userRow.owner_name) {
       await supabase.from("users_app").update({ owner_name: ownerNameInput }).eq("id", userRow.id)
+    }
+  }
+
+  async function saveUserProfile() {
+    if (!userRow) return
+    try {
+      setSavingUserProfile(true)
+      setUserError("")
+      // Read current minimal settings and merge so we don't clobber other columns
+      const { data: existing } = await supabase
+        .from("user_settings")
+        .select("user_profile, appearance_settings")
+        .eq("user_id", userRow.id)
+        .limit(1)
+        .maybeSingle()
+      const mergedProfile = { ...(existing?.user_profile || {}), language: userLang, avatar_url: avatarUrl || null }
+      const { error: upErr } = await supabase.from("user_settings").upsert({
+        user_id: userRow.id,
+        user_profile: mergedProfile
+      }, { onConflict: "user_id" })
+      if (upErr) throw upErr
+      // Sync display name to users_app
+      if (userRow.is_business_owner) {
+        const { error } = await supabase.from("users_app").update({ owner_name: userDisplayName || null }).eq("id", userRow.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from("users_app").update({ staff_name: userDisplayName || null }).eq("id", userRow.id)
+        if (error) throw error
+      }
+      // Apply language immediately
+      try {
+        if (window?.i18next) {
+          window.i18next.changeLanguage?.(userLang)
+          document.documentElement.setAttribute('lang', userLang)
+        }
+      } catch { /* ignore */ }
+      setUserNotice("Saved user settings ✓")
+      setTimeout(() => setUserNotice("") , 2500)
+    } catch (e) {
+      console.error("saveUserProfile failed", e)
+      setUserError(e?.message || "Failed to save user settings")
+    } finally {
+      setSavingUserProfile(false)
+    }
+  }
+
+  async function uploadAvatar(file) {
+    if (!file || !userRow?.id) return
+    try {
+      setUploadingAvatar(true)
+      if (!file.type.startsWith("image/")) throw new Error("Please select an image file")
+      const MAX_MB = 5
+      if (file.size > MAX_MB * 1024 * 1024) throw new Error(`File too large. Max ${MAX_MB}MB`)
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png"
+      // Use same bucket as business logos: 'business-logos'
+      const folder = userRow.business_id ? `${userRow.business_id}/avatars` : `users/${userRow.id}/avatars`
+      const path = `${folder}/${userRow.id}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from("business-logos").upload(path, file, { upsert: true, cacheControl: "3600" })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from("business-logos").getPublicUrl(path)
+      const publicUrl = pub?.publicUrl || ""
+      if (!publicUrl) throw new Error("Could not get public URL")
+      setAvatarUrl(publicUrl)
+      // Auto-save avatar to user_settings (minimal merge)
+      try {
+        const { data: existing } = await supabase
+          .from("user_settings")
+          .select("user_profile")
+          .eq("user_id", userRow.id)
+          .limit(1)
+          .maybeSingle()
+        const mergedProfile = { ...(existing?.user_profile || {}), avatar_url: publicUrl }
+        await supabase.from("user_settings").upsert({
+          user_id: userRow.id,
+          user_profile: mergedProfile
+        }, { onConflict: "user_id" })
+      } catch { /* ignore */ }
+      setUserNotice("Avatar uploaded ✓")
+      setTimeout(() => setUserNotice("") , 2000)
+    } catch (e) {
+      console.error("Avatar upload failed", e)
+      const msg = e?.message?.includes("Bucket not found")
+        ? "Storage bucket 'business-logos' not found. Create it in Supabase > Storage (public), then retry."
+        : (e.message || "Failed to upload avatar")
+      alert(msg)
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  async function changeEmail() {
+    if (!userRow || !newEmail) return
+    try {
+      setChangingEmail(true)
+      const { error } = await supabase.auth.updateUser({ email: newEmail })
+      if (error) throw error
+      setUserNotice("Email update initiated. Check your inbox to confirm.")
+      setTimeout(() => setUserNotice("") , 4000)
+    } catch (e) {
+      alert(e.message || "Failed to update email")
+    } finally {
+      setChangingEmail(false)
+    }
+  }
+
+  async function changePassword() {
+    if (!userRow || !newPassword) return
+    if (newPassword !== confirmPassword) { alert("Passwords do not match"); return }
+    try {
+      setChangingPassword(true)
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw error
+      setNewPassword("")
+      setConfirmPassword("")
+      setUserNotice("Password changed ✓")
+      setTimeout(() => setUserNotice("") , 2500)
+    } catch (e) {
+      alert(e.message || "Failed to change password")
+    } finally {
+      setChangingPassword(false)
     }
   }
 
@@ -268,15 +424,15 @@ export default function Settings() {
     }
   }
 
-  // Apply and persist theme
+  // Apply and persist theme (scoped per-user via localStorage key prefix)
   const applyTheme = (t, opts) => {
     const root = document.documentElement
     if (t === "custom") {
       root.setAttribute("data-theme", "custom")
       if (opts?.primary) root.style.setProperty("--color-brand-primary", opts.primary)
       if (opts?.accent) root.style.setProperty("--color-brand-fuchsia", opts.accent)
-      localStorage.setItem("theme", "custom")
-      localStorage.setItem("themeCustom", JSON.stringify({ primary: opts?.primary || custom.primary, accent: opts?.accent || custom.accent }))
+      localStorage.setItem(getLsKey("theme"), "custom")
+      localStorage.setItem(getLsKey("themeCustom"), JSON.stringify({ primary: opts?.primary || custom.primary, accent: opts?.accent || custom.accent }))
       return
     }
     // preset: ensure inline brand colors are cleared so data-theme wins,
@@ -284,13 +440,14 @@ export default function Settings() {
     root.style.removeProperty("--color-brand-primary")
     root.style.removeProperty("--color-brand-fuchsia")
     root.setAttribute("data-theme", t)
-    localStorage.setItem("theme", t)
-    localStorage.removeItem("themeCustom")
+    localStorage.setItem(getLsKey("theme"), t)
+    localStorage.removeItem(getLsKey("themeCustom"))
   }
   useEffect(() => {
-    const saved = localStorage.getItem("theme") || "purple"
+    if (!userRow?.id) return
+    const saved = localStorage.getItem(getLsKey("theme")) || "purple"
     if (saved === "custom") {
-      const savedCustom = JSON.parse(localStorage.getItem("themeCustom") || "{}")
+      const savedCustom = JSON.parse(localStorage.getItem(getLsKey("themeCustom")) || "{}")
       const fallback = { primary: "#7C3AED", accent: "#D946EF" }
       const next = { ...fallback, ...savedCustom }
       setTheme("custom")
@@ -300,13 +457,13 @@ export default function Settings() {
     }
     setTheme(saved)
     applyTheme(saved)
-  }, [])
+  }, [userRow])
 
   // Apply angle & glow
   const applyAngle = (deg) => {
     const root = document.documentElement
     root.style.setProperty("--brand-angle", `${deg}deg`)
-    localStorage.setItem("brandAngle", String(deg))
+    localStorage.setItem(getLsKey("brandAngle"), String(deg))
   }
   const applyGlow = (mode, color, depth) => {
     const root = document.documentElement
@@ -327,15 +484,16 @@ export default function Settings() {
     } else {
       root.style.setProperty("--glow-color", "var(--color-brand-primary)")
     }
-    localStorage.setItem("glow", JSON.stringify({ mode, color: color || glowColor, depth: d }))
+    localStorage.setItem(getLsKey("glow"), JSON.stringify({ mode, color: color || glowColor, depth: d }))
   }
   useEffect(() => {
+    if (!userRow?.id) return
     // load angle
-    const savedAngle = parseInt(localStorage.getItem("brandAngle") || "90", 10)
+    const savedAngle = parseInt(localStorage.getItem(getLsKey("brandAngle")) || "90", 10)
     setAngle(Number.isFinite(savedAngle) ? savedAngle : 90)
     applyAngle(Number.isFinite(savedAngle) ? savedAngle : 90)
     // load glow
-    const savedGlow = JSON.parse(localStorage.getItem("glow") || "{}")
+    const savedGlow = JSON.parse(localStorage.getItem(getLsKey("glow")) || "{}")
     const m = savedGlow.mode === "custom" ? "custom" : "match"
     const c = typeof savedGlow.color === "string" ? savedGlow.color : "#7C3AED"
     const d = Number.isFinite(savedGlow.depth) ? savedGlow.depth : 60
@@ -343,7 +501,7 @@ export default function Settings() {
     setGlowColor(c)
     setGlowDepth(d)
     applyGlow(m, c, d)
-  }, [])
+  }, [userRow])
 
   return (
     <div className="space-y-4">
@@ -372,6 +530,9 @@ export default function Settings() {
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="business">
         <h2 className="text-lg font-semibold text-white/90">Business Information</h2>
         <p className="text-sm text-slate-400 mt-1">Update your business details, contact information, and logo.</p>
+        {!userRow?.is_business_owner && (
+          <div className="mt-3 text-xs text-amber-300/90">Staff can view these details but cannot modify them.</div>
+        )}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Business ID</label>
@@ -399,7 +560,7 @@ export default function Settings() {
               />
               <button
                 onClick={() => logoInputRef.current?.click()}
-                disabled={uploadingLogo || loading || !userRow?.business_id}
+                disabled={uploadingLogo || loading || !userRow?.business_id || !userRow?.is_business_owner}
                 className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-60"
               >{uploadingLogo ? "Uploading…" : "Upload Photo"}</button>
             </div>
@@ -418,11 +579,11 @@ export default function Settings() {
           </div>
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Owner Name</label>
-            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="Your name" value={ownerNameInput} onChange={(e)=>setOwnerNameInput(e.target.value)} />
+            <input type="text" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder="Your name" value={ownerNameInput} onChange={(e)=>setOwnerNameInput(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Business Phone</label>
-            <input type="tel" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="+965 …" value={businessPhone} onChange={(e)=>setBusinessPhone(e.target.value)} />
+            <input type="tel" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder="+965 …" value={businessPhone} onChange={(e)=>setBusinessPhone(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Business Email</label>
@@ -438,11 +599,80 @@ export default function Settings() {
           </div>
           <div className="md:col-span-2">
             <label className="text-xs uppercase tracking-wide text-slate-400">Business Address</label>
-            <textarea className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" rows="2" placeholder="Street, City, Country" value={businessAddress} onChange={(e)=>setBusinessAddress(e.target.value)} />
+            <textarea className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} rows="2" placeholder="Street, City, Country" value={businessAddress} onChange={(e)=>setBusinessAddress(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
         </div>
         <div className="mt-6 flex justify-end">
-          <button onClick={saveBusiness} disabled={loading || !userRow?.business_id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Business Info</button>
+          <button onClick={saveBusiness} disabled={loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Business Info</button>
+        </div>
+      </section>
+      )}
+
+      {/* User Settings */}
+      {active === "user" && (
+      <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="user">
+        <h2 className="text-lg font-semibold text-white/90">User Settings</h2>
+        <p className="text-sm text-slate-400 mt-1">Update your personal settings for this account.</p>
+        {userNotice && (<div className="mt-3 text-xs text-emerald-300/90">{userNotice}</div>)}
+        {userError && (<div className="mt-3 text-xs text-rose-300/90">{userError}</div>)}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Avatar */}
+          <div className="md:col-span-2">
+            <label className="text-xs uppercase tracking-wide text-slate-400">User Avatar</label>
+            <div className="mt-2 flex items-center gap-3">
+              <div className="h-14 w-14 rounded-full bg-white/10 overflow-hidden flex items-center justify-center">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="h-7 w-7 rounded-full bg-white/10" />
+                )}
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAvatar(f) }}
+              />
+              <button onClick={() => avatarInputRef.current?.click()} disabled={uploadingAvatar || loading} className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-60">
+                {uploadingAvatar ? "Uploading…" : "Upload Avatar"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">Display Name</label>
+            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="Your name" value={userDisplayName} onChange={(e)=>setUserDisplayName(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">Language</label>
+            <select className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" value={userLang} onChange={(e)=>setUserLang(e.target.value)}>
+              <option value="en">English</option>
+              <option value="ar">العربية</option>
+            </select>
+          </div>
+          {/* Change Email */}
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">Change Email</label>
+            <input type="email" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="you@example.com" value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} />
+          </div>
+          <div className="flex items-end">
+            <button onClick={changeEmail} disabled={changingEmail || loading || !newEmail} className="mt-2 px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{changingEmail ? "Saving…" : "Update Email"}</button>
+          </div>
+          {/* Change Password */}
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">New Password</label>
+            <input type="password" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="••••••••" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-wide text-slate-400">Confirm Password</label>
+            <input type="password" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="••••••••" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} />
+          </div>
+        </div>
+        <div className="mt-6 flex justify-between gap-3 flex-wrap">
+          <div className="flex gap-3">
+            <button onClick={saveUserProfile} disabled={loading || savingUserProfile || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingUserProfile ? "Saving…" : "Save User Settings"}</button>
+            <button onClick={changePassword} disabled={changingPassword || loading || !newPassword || newPassword !== confirmPassword} className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-50">{changingPassword ? "Saving…" : "Change Password"}</button>
+          </div>
         </div>
       </section>
       )}

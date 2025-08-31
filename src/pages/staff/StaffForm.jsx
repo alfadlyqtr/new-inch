@@ -42,12 +42,13 @@ const DEFAULT_STAFF = Object.freeze({
   documents: EMPTY_DOCS,
 })
 
-export default function StaffForm({ businessId, onClose, onCreated }) {
+export default function StaffForm({ businessId, onClose, onCreated, prefill = {} }) {
   const [tab, setTab] = useState("documents")
   const [formData, setFormData] = useState(() => ({
     ...DEFAULT_STAFF,
+    ...prefill,
     business_id: businessId,
-    permissions: ensureCompletePermissions(DEFAULT_STAFF_PERMISSIONS),
+    permissions: ensureCompletePermissions(prefill.permissions || DEFAULT_STAFF_PERMISSIONS),
   }))
   const [joiningDate, setJoiningDate] = useState(null)
   const [submitting, setSubmitting] = useState(false)

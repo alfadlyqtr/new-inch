@@ -2,57 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" href="/logo.jpg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + React</title>
   </head>
   <body>
-    <script>
-      (function () {
-        try {
-          var root = document.documentElement;
-          // Theme
-          var t = localStorage.getItem("theme") || "purple";
-          if (t === "custom") {
-            root.setAttribute("data-theme", "custom");
-            var cust = {};
-            try { cust = JSON.parse(localStorage.getItem("themeCustom") || "{}"); } catch (_) {}
-            if (cust.primary) root.style.setProperty("--color-brand-primary", cust.primary);
-            if (cust.accent) root.style.setProperty("--color-brand-fuchsia", cust.accent);
-          } else {
-            root.setAttribute("data-theme", t);
-            // Clear inline custom colors in case they were set previously
-            root.style.removeProperty("--color-brand-primary");
-            root.style.removeProperty("--color-brand-fuchsia");
-          }
-          // Angle
-          var deg = parseInt(localStorage.getItem("brandAngle") || "90", 10);
-          if (isFinite(deg)) root.style.setProperty("--brand-angle", String(deg) + "deg");
-          // Glow
-          var glow = {};
-          try { glow = JSON.parse(localStorage.getItem("glow") || "{}"); } catch (_) {}
-          var mode = glow && glow.mode === "custom" ? "custom" : "match";
-          var depth = Number.isFinite(glow && glow.depth) ? glow.depth : 60;
-          var a1 = 55 + depth * 0.4;
-          var a2 = 45 + depth * 0.4;
-          var a3 = 30 + depth * 0.35;
-          var soft = 18 + depth * 0.18;
-          var outer = 30 + depth * 0.22;
-          root.style.setProperty("--glow-a1", a1 + "%");
-          root.style.setProperty("--glow-a2", a2 + "%");
-          root.style.setProperty("--glow-a3", a3 + "%");
-          root.style.setProperty("--glow-soft-blur", soft + "px");
-          root.style.setProperty("--glow-outer-blur", outer + "px");
-          if (mode === "custom" && glow && glow.color) {
-            root.style.setProperty("--glow-color", glow.color);
-          } else {
-            root.style.setProperty("--glow-color", "var(--color-brand-primary)");
-          }
-        } catch (e) {
-          // swallow
-        }
-      })();
-    </script>
+    <!-- Per-user appearance is applied inside React (Settings.jsx) after auth.
+         We avoid any global localStorage reads here to prevent cross-user bleed. -->
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

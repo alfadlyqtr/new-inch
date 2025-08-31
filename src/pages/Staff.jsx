@@ -43,6 +43,9 @@ export default function Staff() {
   // derived
   const businessIdDisplay = useMemo(() => businessId || "—", [businessId])
 
+  // helper: normalize email for comparisons
+  const normEmail = (e) => (e || "").trim().toLowerCase()
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -76,15 +79,24 @@ export default function Staff() {
       } finally {
         if (!cancelled) setLoading(false)
       }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
-  // Load detailed staff profile from 'staff' table for the selected user (by email + business_id)
+  useEffect(() => {
+    if (activeTab === 'codes' && businessId) {
+      loadCodes(businessId)
+    }
+  }, [activeTab, businessId])
+
+  // Load detailed staff profile (query staff by staff_id/email/name within this business)
   async function loadSelectedStaffProfile(sel, bizId) {
     if (!sel || !bizId) return
     const email = sel?.email?.trim()
+    const nameLike = (sel?.owner_name || sel?.full_name || sel?.staff_name || sel?.name || '').trim()
     const maybeStaffId = sel?.staff_id || sel?.staffId || null
     setSelectedStaffLoading(true)
     try {
-      // Try by staff_id first if available, otherwise by email
       let data = null, error = null
       if (maybeStaffId) {
         const res = await supabase
@@ -100,9 +112,20 @@ export default function Staff() {
           .from('staff')
           .select('*')
           .eq('business_id', bizId)
-          .eq('email', email)
+          .ilike('email', email)
           .maybeSingle()
         data = res2.data; error = res2.error
+      }
+      if ((!data && !error) && nameLike) {
+        const res3 = await supabase
+          .from('staff')
+          .select('*')
+          .eq('business_id', bizId)
+          .ilike('name', `%${nameLike}%`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        data = res3.data; error = res3.error
       }
       if (error) throw error
       const normalized = data ? {
@@ -110,31 +133,24 @@ export default function Staff() {
         permissions: ensureCompletePermissions(data.permissions || {}),
       } : null
       setSelectedStaff(normalized)
-      console.log('[StaffDetails] loaded staff profile', { email, bizId, staff_id: maybeStaffId, found: !!data })
-
-      // Load documents if we have a staff id
+      // Load documents
       if (data?.id) {
         const { data: docs, error: docErr } = await supabase
           .from('staff_documents')
           .select('id, type, file_url, verified, issued_on, expires_on, extracted')
           .eq('staff_id', data.id)
           .order('id', { ascending: false })
-        if (!docErr) setSelectedStaffDocs(docs || [])
-        else setSelectedStaffDocs([])
-
-        // Backfill users_app.staff_id if missing
+        setSelectedStaffDocs(docErr ? [] : (docs || []))
+        // Backfill users_app.staff_id
         try {
           if (!maybeStaffId && email) {
-            const { error: linkErr } = await supabase
+            await supabase
               .from('users_app')
               .update({ staff_id: data.id })
               .eq('business_id', bizId)
               .eq('email', email)
-            if (linkErr) console.warn('[StaffDetails] users_app.staff_id backfill failed (non-fatal)', linkErr)
           }
-        } catch (ee) {
-          console.warn('[StaffDetails] users_app.staff_id backfill threw (non-fatal)', ee)
-        }
+        } catch {}
       } else {
         setSelectedStaffDocs([])
       }
@@ -146,16 +162,6 @@ export default function Staff() {
       setSelectedStaffLoading(false)
     }
   }
-
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
-    if (activeTab === 'codes' && businessId) {
-      loadCodes(businessId)
-    }
-  }, [activeTab, businessId])
 
   // business codes: list
   async function loadCodes(bizId) {
@@ -266,6 +272,7 @@ export default function Staff() {
   async function loadInvited(bizId) {
     if (!bizId) return
     try {
+      // 1) fetch pending/invited staff for this business
       const { data, error } = await supabase
         .from('staff')
         .select('id, name, email, role, invitation_status, created_at')
@@ -273,7 +280,31 @@ export default function Staff() {
         .in('invitation_status', ['pending','invited'])
         .order('created_at', { ascending: true })
       if (error) throw error
-      setInvited(data || [])
+      const invites = data || []
+
+      // 2) fetch current members' emails for this business
+      const { data: mems, error: memErr } = await supabase
+        .from('users_app')
+        .select('email')
+        .eq('business_id', bizId)
+      if (memErr) throw memErr
+      const memberEmails = new Set((mems || []).map(m => normEmail(m.email)))
+
+      // 3) filter out invites that already have a matching users_app email
+      const filtered = invites.filter(inv => !memberEmails.has(normEmail(inv.email)))
+      setInvited(filtered)
+
+      // 4) optional: reconcile invitation_status to 'accepted' when matched
+      //    Do this best-effort in background, non-blocking
+      const toAccept = invites.filter(inv => memberEmails.has(normEmail(inv.email)))
+      if (toAccept.length > 0) {
+        try {
+          const ids = toAccept.map(i => i.id)
+          await supabase.from('staff')
+            .update({ invitation_status: 'accepted' })
+            .in('id', ids)
+        } catch (_) { /* ignore non-fatal */ }
+      }
     } catch (_e) {
       // optional log
     }
@@ -462,6 +493,19 @@ export default function Staff() {
                     <div className="text-[10px] text-slate-400">Invited {s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}</div>
                     <button
                       type="button"
+                      onClick={() => { setSelected({
+                        id: `inv-${s.id}`,
+                        email: s.email,
+                        role: s.role || 'staff',
+                        is_business_owner: false,
+                        is_staff_account: true,
+                        created_at: s.created_at,
+                        name: s.name,
+                      }); setViewOpen(true); loadSelectedStaffProfile({ staff_id: s.id, email: s.email, name: s.name }, businessId) }}
+                      className="px-2 py-1 rounded-md text-[10px] pill-active glow"
+                    >View</button>
+                    <button
+                      type="button"
                       onClick={async (e) => {
                         e.stopPropagation();
                         console.log('delete clicked', s.id);
@@ -543,8 +587,8 @@ export default function Staff() {
             <div className="mt-4 h-[560px] overflow-y-auto pr-1">
               <StaffForm
                 businessId={businessId}
-                onClose={()=>setInviteOpen(false)}
-                onCreated={()=>{ loadMembers(businessId); loadInvited(businessId) }}
+                onClose={()=>{ setInviteOpen(false) }}
+                onCreated={async()=>{ await loadMembers(businessId); await loadInvited(businessId); setInviteOpen(false); if (selected) { await loadSelectedStaffProfile(selected, businessId) } }}
               />
             </div>
           </div>
@@ -586,9 +630,9 @@ export default function Staff() {
       {/* View member modal */}
       {viewOpen && selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setViewOpen(false)} />
-          <div className="relative glass rounded-2xl border border-white/10 p-6 w-full max-w-lg">
-            <div className="flex items-center justify-between">
+          <div className="absolute inset-0 bg-black/70" onClick={() => setViewOpen(false)} />
+          <div className="relative rounded-xl border border-white/10 w-[720px] max-w-[90vw] h-[80vh] bg-[#0b1220] shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/10 sticky top-0 bg-[#0b1220] z-10 rounded-t-xl">
               <div className="text-white/90 text-lg font-semibold">Staff Details</div>
               <div className="flex items-center gap-2">
                 <button
@@ -598,12 +642,12 @@ export default function Staff() {
                 <button onClick={() => setViewOpen(false)} className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs">Close</button>
               </div>
             </div>
-            <div className="mt-4 flex items-start gap-4">
-              <div className="h-12 w-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-sm text-white/90">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 flex items-start gap-4">
+              <div className="h-10 w-10 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-xs text-white/90">
                 {initials(displayName(selected))}
               </div>
               <div className="flex-1">
-                <div className="text-white/90 font-semibold text-sm">{displayName(selected)}</div>
+                <div className="text-white/90 font-semibold text-sm truncate">{displayName(selected)}</div>
                 <div className="mt-1 inline-flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded bg-white/10 border border-white/10 text-[10px] uppercase tracking-wide">
                     {selected.is_business_owner ? 'owner' : (selected.role || 'staff')}
@@ -612,14 +656,14 @@ export default function Staff() {
                     <span className="px-2 py-0.5 rounded bg-white/10 border border-white/10 text-[10px] uppercase tracking-wide">staff account</span>
                   )}
                 </div>
-                <div className="mt-4 grid sm:grid-cols-2 gap-3 text-sm text-slate-300">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
                   <div>
-                    <div className="text-xs text-slate-400">Email</div>
-                    <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10">{selected.email || '—'}</div>
+                    <div className="text-[11px] text-slate-400">Email</div>
+                    <div className="px-2 py-1.5 rounded-md bg-white/5 border border-white/10 truncate">{selected.email || '—'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-slate-400">Joined</div>
-                    <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10">{selected.created_at ? new Date(selected.created_at).toLocaleString() : '—'}</div>
+                    <div className="text-[11px] text-slate-400">Joined</div>
+                    <div className="px-2 py-1.5 rounded-md bg-white/5 border border-white/10">{selected.created_at ? new Date(selected.created_at).toLocaleString() : '—'}</div>
                   </div>
                 </div>
                 {/* Staff Profile from 'staff' table */}
@@ -629,7 +673,7 @@ export default function Staff() {
                     <div className="text-xs text-slate-400">Loading profile…</div>
                   )}
                   {!selectedStaffLoading && !selectedStaff && (
-                    <div className="text-xs text-slate-400">No staff profile found for this email. Create via Invite New Staff.</div>
+                    <div className="text-xs text-slate-400">No staff profile found for this member.</div>
                   )}
                   {!selectedStaffLoading && selectedStaff && (
                     <StaffDetails
@@ -637,14 +681,13 @@ export default function Staff() {
                       staff={selectedStaff}
                       docs={selectedStaffDocs}
                       loading={selectedStaffLoading}
-                      onReload={() => loadSelectedStaffProfile(selected, selected?.business_id)}
+                      onReload={() => loadSelectedStaffProfile(selected, businessId)}
                       onClose={() => setViewOpen(false)}
                     />
                   )}
                 </div>
-                <div className="mt-4 flex items-center justify-end gap-2">
+                <div className="mt-4 flex items-center justify-end gap-2 border-t border-white/10 pt-3">
                   <button className="px-3 py-1.5 rounded-md text-xs bg-white/10" onClick={()=>setViewOpen(false)}>Close</button>
-                  <button disabled className="px-3 py-1.5 rounded-md text-xs pill-active glow opacity-60">Edit (soon)</button>
                 </div>
               </div>
             </div>

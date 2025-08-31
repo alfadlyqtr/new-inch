@@ -9,18 +9,35 @@ export default function Auth() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
+  const SIGNIN_TIMEOUT_MS = 12000
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError("")
     setLoading(true)
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    setLoading(false)
-    if (error) {
-      setError(error.message)
-      return
-    }
-    if (data?.user) {
-      navigate("/dashboard", { replace: true })
+    try {
+      // Race the auth request with a timeout to avoid freezing the UI if the request never returns
+      const authPromise = supabase.auth.signInWithPassword({ email, password })
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), SIGNIN_TIMEOUT_MS))
+      const result = await Promise.race([authPromise, timeoutPromise])
+      if (result?.timeout) {
+        console.error("Sign-in timed out. Supabase URL:", import.meta.env.VITE_SUPABASE_URL)
+        setError("Sign-in timed out. Check your connection and Supabase URL configuration.")
+        return
+      }
+      const { data, error } = result
+      if (error) {
+        setError(error.message)
+        return
+      }
+      if (data?.user) {
+        navigate("/dashboard", { replace: true })
+      }
+    } catch (err) {
+      console.error("Sign-in failed:", err)
+      setError(typeof err?.message === 'string' ? err.message : "Unexpected error during sign-in")
+    } finally {
+      setLoading(false)
     }
   }
   return (

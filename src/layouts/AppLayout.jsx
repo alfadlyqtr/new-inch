@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
+import { ensureCompletePermissions } from "../pages/staff/staff-permissions-defaults.js"
 import { useTranslation } from "react-i18next"
 
 const navItems = [
@@ -45,6 +46,13 @@ export default function AppLayout() {
   const [signingOut, setSigningOut] = useState(false)
   const [userName, setUserName] = useState("")
   const [userRole, setUserRole] = useState("")
+  const [avatarUrl, setAvatarUrl] = useState("")
+  const [userIsOwner, setUserIsOwner] = useState(false)
+  const [userLoaded, setUserLoaded] = useState(false)
+  const [isStaffAccount, setIsStaffAccount] = useState(null) // null unknown, true staff, false non-staff
+  const [staffId, setStaffId] = useState(null)
+  const [userAppId, setUserAppId] = useState(null)
+  const [staffPerms, setStaffPerms] = useState(null) // normalized perms
   const { i18n, t } = useTranslation()
   const [lng, setLng] = useState(i18n.language || "en")
   const [approvedChecked, setApprovedChecked] = useState(false)
@@ -102,29 +110,143 @@ export default function AppLayout() {
     })()
   }, [session])
 
+  // Load staff permissions when applicable (link via staff.user_id)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
+        if (!session?.user) return
+        if (userIsOwner) { setStaffPerms(null); return } // owners can see all
+        if (!userAppId) { setStaffPerms(null); return }
+        const { data, error } = await supabase
+          .from('staff')
+          .select('id, permissions')
+          .eq('user_id', userAppId)
+          .maybeSingle()
+        if (cancelled) return
+        if (error) { setStaffPerms(null); return }
+        const perms = ensureCompletePermissions(data?.permissions || {})
+        if (data?.id) setStaffId(data.id)
+        setStaffPerms(perms)
+      } catch {
+        if (!cancelled) setStaffPerms(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [session, userAppId, userIsOwner])
+
+  // Helpers to apply per-user appearance instantly (mirrors Settings.jsx)
+  const applyTheme = (t, opts) => {
+    const root = document.documentElement
+    if (t === "custom") {
+      root.setAttribute("data-theme", "custom")
+      if (opts?.primary) root.style.setProperty("--color-brand-primary", opts.primary)
+      if (opts?.accent) root.style.setProperty("--color-brand-fuchsia", opts.accent)
+      return
+    }
+    root.style.removeProperty("--color-brand-primary")
+    root.style.removeProperty("--color-brand-fuchsia")
+    root.setAttribute("data-theme", t)
+  }
+  const applyAngle = (deg) => {
+    const root = document.documentElement
+    root.style.setProperty("--brand-angle", `${deg}deg`)
+  }
+  const applyGlow = (mode, color, depth) => {
+    const root = document.documentElement
+    const d = Math.max(0, Math.min(100, depth ?? 60))
+    const a1 = 55 + d * 0.4
+    const a2 = 45 + d * 0.4
+    const a3 = 30 + d * 0.35
+    const soft = 18 + d * 0.18
+    const outer = 30 + d * 0.22
+    root.style.setProperty("--glow-a1", `${a1}%`)
+    root.style.setProperty("--glow-a2", `${a2}%`)
+    root.style.setProperty("--glow-a3", `${a3}%`)
+    root.style.setProperty("--glow-soft-blur", `${soft}px`)
+    root.style.setProperty("--glow-outer-blur", `${outer}px`)
+    if (mode === "custom" && typeof color === "string") {
+      root.style.setProperty("--glow-color", color)
+    } else {
+      root.style.removeProperty("--glow-color")
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        if (!session?.user) return
         const { data: sessionData } = await supabase.auth.getSession()
         const authUser = sessionData?.session?.user
         if (!authUser || cancelled) return
         const { data: user, error } = await supabase
           .from("users_app")
-          .select("full_name, owner_name, staff_name, is_business_owner")
+          .select("id, full_name, owner_name, staff_name, is_business_owner, is_staff_account")
           .eq("auth_user_id", authUser.id)
           .limit(1)
           .maybeSingle()
         if (error || !user || cancelled) return
         const name = user.owner_name || user.full_name || user.staff_name || ""
         setUserName(name)
-        setUserRole(user.is_business_owner ? "Business Owner" : "Account")
+        // Treat as owner if flagged OR not a staff account.
+        let isOwner = !!user.is_business_owner || user.is_staff_account === false
+        setIsStaffAccount(user.is_staff_account ?? null)
+        // Optional: if a staff row explicitly marks owner, honor it (best-effort; may be blocked by RLS)
+        try {
+          const { data: staffRow } = await supabase
+            .from('staff')
+            .select('is_business_owner')
+            .eq('user_id', user.id)
+            .maybeSingle()
+          if (staffRow?.is_business_owner === true) isOwner = true
+        } catch { /* noop */ }
+        setUserRole(isOwner ? "Business Owner 👑" : "Staff")
+        setUserIsOwner(isOwner)
+        setUserAppId(user.id)
+        setStaffId(null)
+        // Fetch avatar + appearance + language from user_settings
+        try {
+          const { data: us } = await supabase
+            .from("user_settings")
+            .select("user_profile, appearance_settings")
+            .eq("user_id", user.id)
+            .limit(1)
+            .maybeSingle()
+          const url = us?.user_profile?.avatar_url || ""
+          if (url) setAvatarUrl(url)
+          // Apply language
+          const lngPref = us?.user_profile?.language
+          if (lngPref && typeof lngPref === 'string') {
+            setLng(lngPref)
+            i18n.changeLanguage(lngPref)
+            document.documentElement.setAttribute('lang', lngPref)
+          }
+          // Apply per-user appearance
+          const appr = us?.appearance_settings || null
+          if (appr) {
+            const t = appr.theme || "purple"
+            const cust = appr.custom || {}
+            const ang = Number.isFinite(appr.angle) ? appr.angle : 90
+            const glow = appr.glow || {}
+            applyTheme(t, { primary: cust.primary, accent: cust.accent })
+            applyAngle(ang)
+            const gm = glow.mode === "custom" ? "custom" : "match"
+            const gc = typeof glow.color === "string" ? glow.color : undefined
+            const gd = Number.isFinite(glow.depth) ? glow.depth : 60
+            applyGlow(gm, gc, gd)
+          }
+        } catch {
+          /* ignore */
+        }
       } catch (_e) {
         // noop
+      } finally {
+        if (!cancelled) setUserLoaded(true)
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [session])
 
   useEffect(() => {
     let cancelled = false
@@ -185,6 +307,7 @@ export default function AppLayout() {
   // Realtime: update approval state immediately when it changes
   useEffect(() => {
     let channel
+    let channelUserSettings
     ;(async () => {
       const { data } = await supabase.auth.getSession()
       const authUser = data?.session?.user
@@ -203,10 +326,40 @@ export default function AppLayout() {
           }
         )
         .subscribe()
+
+      // Subscribe to user_settings changes to refresh avatar immediately
+      try {
+        const { data: ua } = await supabase
+          .from('users_app')
+          .select('id')
+          .eq('auth_user_id', authUser.id)
+          .limit(1)
+          .maybeSingle()
+        const userId = ua?.id
+        if (userId) {
+          channelUserSettings = supabase
+            .channel(`user-settings-${userId}`)
+            .on(
+              'postgres_changes',
+              { event: 'UPDATE', schema: 'public', table: 'user_settings', filter: `user_id=eq.${userId}` },
+              (payload) => {
+                const prof = payload?.new?.user_profile
+                if (prof && typeof prof === 'object') {
+                  const url = prof.avatar_url || ''
+                  setAvatarUrl(url || '')
+                }
+              }
+            )
+            .subscribe()
+        }
+      } catch { /* noop */ }
     })()
     return () => {
       if (channel) {
         try { supabase.removeChannel(channel) } catch { /* noop */ }
+      }
+      if (channelUserSettings) {
+        try { supabase.removeChannel(channelUserSettings) } catch { /* noop */ }
       }
     }
   }, [])
@@ -286,6 +439,43 @@ export default function AppLayout() {
     return <Navigate to="/setup" replace />
   }
 
+  // Permission-based nav filtering (component scope)
+  const routeToModule = (to) => {
+    if (to.startsWith('/customers')) return 'customers'
+    if (to.startsWith('/orders')) return 'orders'
+    if (to.startsWith('/job-cards')) return 'job cards'
+    if (to.startsWith('/invoices')) return 'invoices'
+    if (to.startsWith('/inventory')) return 'inventory'
+    if (to.startsWith('/expenses')) return 'expenses'
+    if (to.startsWith('/reports')) return 'reports'
+    if (to.startsWith('/messages')) return 'messages'
+    if (to.startsWith('/public-profile')) return 'public profile'
+    if (to.startsWith('/staff')) return 'staff' // hidden for non-owners
+    return null
+  }
+
+  const canSeeRoute = (to) => {
+    // Always allow dashboard and settings
+    if (to.startsWith('/dashboard') || to.startsWith('/settings')) return true
+    // Hide legacy Staff menu for everyone (owner and staff)
+    const mod = routeToModule(to)
+    if (mod === 'staff') return false
+    // Owners can see everything else
+    if (userIsOwner) return true
+    if (!mod) return true
+    return !!staffPerms?.[mod]?.view
+  }
+
+  // Ensure BO always sees all except legacy Staff.
+  // If user is not explicitly a staff account and perms are not yet loaded, show full nav (minus Staff).
+  const showAllMinusStaff = userIsOwner || (!userLoaded) || (isStaffAccount !== true)
+  const visibleNav = showAllMinusStaff
+    ? navItems.filter(n => n.to !== '/staff')
+    : navItems.filter(n => canSeeRoute(n.to))
+
+  // Debug (remove later)
+  console.debug('[AppLayout] userLoaded:', userLoaded, 'userIsOwner:', userIsOwner, 'isStaffAccount:', isStaffAccount, 'staffPerms?', !!staffPerms, 'visibleNav:', visibleNav.map(v => v.to))
+
   return (
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
       {/* Sidebar */}
@@ -295,7 +485,11 @@ export default function AppLayout() {
           <div className={`h-full ${collapsed ? "w-full" : "w-[16rem] mx-auto"} overflow-y-auto no-scrollbar rounded-3xl p-2 sidebar-surface glow ring-1 ring-white/25`}>
             {/* Brand */}
             <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}> 
-              <div className="h-10 w-10 rounded-full glow bg-gradient-to-tr from-brand-primary to-brand-fuchsia" />
+              <img
+                src="/logo.jpg"
+                alt="INCH logo"
+                className="h-10 w-10 rounded-md object-cover border border-white/20 glow bg-white/5"
+              />
               {!collapsed && (
                 <div>
                   <div className="text-white font-semibold leading-5">INCH</div>
@@ -306,7 +500,7 @@ export default function AppLayout() {
 
             {/* Nav */}
             <nav className="mt-1 flex flex-col gap-1">
-              {navItems.map((n) => (
+              {visibleNav.map((n) => (
                 <SideLink key={n.to} {...n} collapsed={collapsed} />
               ))}
             </nav>
@@ -327,11 +521,15 @@ export default function AppLayout() {
                 </select>
               </div>
               <div className={`mt-3 glass rounded-xl p-2 flex items-center ${collapsed ? "justify-center" : "gap-2"}`}>
-                <div className="h-8 w-8 rounded-full bg-white/10" />
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" className="h-8 w-8 rounded-full object-cover border border-white/20" />
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-white/10" />
+                )}
                 {!collapsed && (
                   <div className="text-xs">
                     <div className="text-white/90">{userName || "—"}</div>
-                    <div className="text-white/70">{userRole || "Account"}</div>
+                    <div className="text-white/70">{userIsOwner ? "Business Owner 👑" : (userRole || "Staff")}</div>
                   </div>
                 )}
               </div>
