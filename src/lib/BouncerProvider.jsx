@@ -37,13 +37,9 @@ export function BouncerProvider({ children }) {
 
   const fetchFresh = async () => {
     const b = await createBouncer(supabase)
-    if (!mounted.current) return
+    if (!mounted.current) return b
     setState(b)
-    try {
-      if (b.authed && b.userId) {
-        localStorage.setItem(cacheKey(b.userId), JSON.stringify({ ...b, loading: false }))
-      }
-    } catch {}
+    try { if (b?.userId) localStorage.setItem(cacheKey(b.userId), JSON.stringify(b)) } catch {}
     return b
   }
 

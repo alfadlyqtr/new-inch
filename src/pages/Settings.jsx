@@ -60,7 +60,6 @@ export default function Settings() {
   // Notification prefs (from public.user_settings)
   const [emailNotif, setEmailNotif] = useState(false)
   const [pushNotif, setPushNotif] = useState(false)
-  const [smsNotif, setSmsNotif] = useState(false)
 
   const tabs = [
     { id: "business", label: "Business", Icon: IconBriefcase },
@@ -135,7 +134,7 @@ export default function Settings() {
           if (biz) {
             setBusinessId(biz.id)
             setBusinessName(biz.business_name || "")
-            setOwnerNameInput(biz.owner_name || user.owner_name || "")
+            setOwnerNameInput(biz.owner_name || user.owner_name || user.full_name || "")
             setBusinessPhone(biz.contact_phone || "")
             setBusinessEmail(biz.contact_email || user.email || "")
             setBusinessAddress(biz.address || "")
@@ -154,7 +153,6 @@ export default function Settings() {
         if (settings) {
           setEmailNotif(!!settings.email_notifications)
           setPushNotif(!!settings.push_notifications)
-          setSmsNotif(!!settings.sms_notifications)
           const inv = settings.invoice_settings || {}
           setTaxRate(Number(inv.tax_rate ?? 0))
           setCurrency(inv.currency || "KWD (د.ك) - Kuwaiti Dinar")
@@ -181,7 +179,7 @@ export default function Settings() {
           // Hydrate user profile preferences
           const profile = settings.user_profile || {}
           if (profile.language) setUserLang(profile.language)
-          if (profile.avatar_url) setAvatarUrl(profile.avatar_url)
+          if (profile.avatar_url) setAvatarUrl(`${profile.avatar_url}?v=${Date.now()}`)
         } else {
           // Ensure settings row exists
           await supabase.from("user_settings").insert({ user_id: user.id })
@@ -273,7 +271,9 @@ export default function Settings() {
       const { data: pub } = supabase.storage.from("business-logos").getPublicUrl(path)
       const publicUrl = pub?.publicUrl || ""
       if (!publicUrl) throw new Error("Could not get public URL")
-      setAvatarUrl(publicUrl)
+
+      const freshUrl = `${publicUrl}?v=${Date.now()}`
+      setAvatarUrl(freshUrl)
       // Auto-save avatar to user_settings (minimal merge)
       try {
         const { data: existing } = await supabase
@@ -282,11 +282,13 @@ export default function Settings() {
           .eq("user_id", userRow.id)
           .limit(1)
           .maybeSingle()
-        const mergedProfile = { ...(existing?.user_profile || {}), avatar_url: publicUrl }
+        const mergedProfile = { ...(existing?.user_profile || {}), avatar_url: freshUrl }
         await supabase.from("user_settings").upsert({
           user_id: userRow.id,
           user_profile: mergedProfile
         }, { onConflict: "user_id" })
+        // Fire a local event so the sidebar updates instantly (no flicker, no manual refresh)
+        try { window.dispatchEvent(new CustomEvent('avatar-updated', { detail: { url: freshUrl } })) } catch {}
       } catch { /* ignore */ }
       setUserNotice("Avatar uploaded ✓")
       setTimeout(() => setUserNotice("") , 2000)
@@ -390,7 +392,6 @@ export default function Settings() {
       user_id: userRow.id,
       email_notifications: !!emailNotif,
       push_notifications: !!pushNotif,
-      sms_notifications: !!smsNotif,
     }, { onConflict: "user_id" })
   }
 
@@ -736,13 +737,6 @@ export default function Settings() {
             <div>
               <div className="text-sm text-white/90">Push Notifications</div>
               <div className="text-xs text-slate-400">Receive push notifications in browser</div>
-            </div>
-          </label>
-          <label className="flex items-start gap-3">
-            <input type="checkbox" className="mt-1 h-4 w-4" checked={smsNotif} onChange={(e)=>setSmsNotif(e.target.checked)} />
-            <div>
-              <div className="text-sm text-white/90">SMS Notifications</div>
-              <div className="text-xs text-slate-400">Receive notifications via SMS</div>
             </div>
           </label>
         </div>

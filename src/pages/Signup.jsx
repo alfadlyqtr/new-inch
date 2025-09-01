@@ -21,27 +21,52 @@ export default function Signup() {
     if (password !== confirm) { setError("Passwords do not match"); return }
     setLoading(true)
     try {
-      const { data, error: signErr } = await supabase.auth.signUp({
+      // Fire a raw GoTrue signup in parallel to capture the exact server error/status
+      const base = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '')
+      const key = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+      const rawSignup = fetch(`${base}/auth/v1/signup?redirect_to=${encodeURIComponent(window.location.origin + '/auth')}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: key },
+        body: JSON.stringify({ email, password, data: { full_name: name } }),
+      }).then(async (r) => ({ raw: true, status: r.status, ok: r.ok, json: await r.json().catch(() => ({})) }))
+
+      const sdkSignup = supabase.auth.signUp({
         email,
         password,
-        options: {
-          data: { full_name: name },
-          emailRedirectTo: window.location.origin + "/auth",
-        },
+        options: { data: { full_name: name }, emailRedirectTo: window.location.origin + '/auth' },
       })
-      if (signErr) throw signErr
+      const timeout = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000))
+
+      // First race to avoid spinner hang
+      const first = await Promise.race([sdkSignup, rawSignup, timeout])
+      if (first?.timeout) { throw new Error('Signup timed out. Check your connection and project settings.') }
+
+      // Then await both for more detailed error reporting
+      const [sdkRes, rawRes] = await Promise.allSettled([sdkSignup, rawSignup])
+      const rawVal = rawRes.status === 'fulfilled' ? rawRes.value : null
+      const sdkVal = sdkRes.status === 'fulfilled' ? sdkRes.value : null
+      if (rawVal?.raw && !rawVal.ok) {
+        const msg = rawVal?.json?.error_description || rawVal?.json?.msg || JSON.stringify(rawVal.json)
+        throw new Error(`Signup rejected (${rawVal.status}): ${msg}`)
+      }
+      if (sdkVal?.error) throw sdkVal.error
+      const data = sdkVal?.data || {}
 
       const userId = data.user?.id || null
-      // Create users_app profile row for this user (is_approved defaults to false)
-      if (userId) {
-        await supabase.from("users_app").insert({
-          auth_user_id: userId,
-          email,
-          full_name: name,
-          is_approved: false,
-          role: "user",
-        })
-      }
+      // Create or update users_app profile row (idempotent to avoid 409 conflicts)
+      // Only attempt when we have a session (avoids RLS issues pre-confirmation)
+      try {
+        const { data: s } = await supabase.auth.getSession()
+        const hasSession = !!s?.session?.user
+        if (userId && hasSession) {
+          await supabase
+            .from("users_app")
+            .upsert(
+              { auth_user_id: userId, email, full_name: name, is_approved: false, role: "user" },
+              { onConflict: 'auth_user_id' }
+            )
+        }
+      } catch (_e) { /* non-blocking */ }
 
       setSuccess("Account created. Please confirm your email (subject: INCH). Check your inbox or junk folder.")
     } catch (e) {

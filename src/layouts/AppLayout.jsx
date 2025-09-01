@@ -214,7 +214,7 @@ export default function AppLayout() {
             .limit(1)
             .maybeSingle()
           const url = us?.user_profile?.avatar_url || ""
-          if (url) setAvatarUrl(url)
+          if (url) setAvatarUrl(`${url}?v=${Date.now()}`)
           // Apply language
           const lngPref = us?.user_profile?.language
           if (lngPref && typeof lngPref === 'string') {
@@ -346,7 +346,18 @@ export default function AppLayout() {
                 const prof = payload?.new?.user_profile
                 if (prof && typeof prof === 'object') {
                   const url = prof.avatar_url || ''
-                  setAvatarUrl(url || '')
+                  setAvatarUrl(url ? `${url}?v=${Date.now()}` : '')
+                }
+              }
+            )
+            .on(
+              'postgres_changes',
+              { event: 'INSERT', schema: 'public', table: 'user_settings', filter: `user_id=eq.${userId}` },
+              (payload) => {
+                const prof = payload?.new?.user_profile
+                if (prof && typeof prof === 'object') {
+                  const url = prof.avatar_url || ''
+                  setAvatarUrl(url ? `${url}?v=${Date.now()}` : '')
                 }
               }
             )
@@ -387,6 +398,19 @@ export default function AppLayout() {
       } catch { /* noop */ }
     })()
     return () => { cancelled = true; if (interval) clearInterval(interval) }
+  }, [])
+
+  // Instant local update: listen for avatar-updated and swap after preloading (no flicker)
+  useEffect(() => {
+    const handler = (e) => {
+      const next = e?.detail?.url
+      if (!next || typeof next !== 'string') return
+      const img = new Image()
+      img.onload = () => setAvatarUrl(next)
+      img.src = next
+    }
+    window.addEventListener('avatar-updated', handler)
+    return () => window.removeEventListener('avatar-updated', handler)
   }, [])
 
   const dateStr = now.toLocaleDateString(undefined, {
@@ -430,8 +454,12 @@ export default function AppLayout() {
     )
   }
 
-  if (approvedChecked && isApproved === false) {
-    return <Navigate to="/pending-approval" replace />
+  // Dev bypass: allow navigating the app even if not yet approved
+  const SKIP_APPROVAL = import.meta.env.VITE_DEV_SKIP_APPROVAL === 'true'
+  if (!SKIP_APPROVAL) {
+    if (approvedChecked && isApproved === false) {
+      return <Navigate to="/pending-approval" replace />
+    }
   }
 
   // If approved but setup is incomplete (no business linked), send to setup
