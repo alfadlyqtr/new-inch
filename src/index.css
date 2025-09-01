@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* Welcome Animation Keyframes */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.8s ease-out forwards;
+}
+
 /* Base tokens for Tailwind (default = purple theme) */
 @theme {
   --color-brand-primary: #7C3AED;

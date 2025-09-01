@@ -3,6 +3,8 @@ import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 import { ensureCompletePermissions } from "../pages/staff/staff-permissions-defaults.js"
 import { useTranslation } from "react-i18next"
+import WelcomeAnimation from "../components/WelcomeAnimation.jsx"
+import 'driver.js/dist/driver.css'
 
 const navItems = [
   { to: "/dashboard", label: "dashboard", icon: "🏠" },
@@ -60,6 +62,7 @@ export default function AppLayout() {
   const [needsSetup, setNeedsSetup] = useState(false)
   const [missingBusiness, setMissingBusiness] = useState(false)
   const [setupChecked, setSetupChecked] = useState(false)
+  const [showWelcome, setShowWelcome] = useState(false)
   const languages = [
     { code: "en", label: "EN" },
     { code: "ar", label: "ع" },
@@ -287,13 +290,23 @@ export default function AppLayout() {
         if (!user) { setSetupChecked(true); return }
         const { data: row } = await supabase
           .from('users_app')
-          .select('is_business_owner, business_id')
+          .select('is_business_owner, business_id, setup_completed, last_login_at')
           .eq('auth_user_id', user.id)
           .order('updated_at', { ascending: false })
           .limit(1)
           .maybeSingle()
         if (cancelled) return
         const hasBiz = !!row?.business_id
+        const isOwner = !!row?.is_business_owner
+        const setupComplete = !!row?.setup_completed
+        const lastLogin = row?.last_login_at
+        const welcomeSeen = (typeof window !== 'undefined') && window.localStorage?.getItem('inch_welcome_shown') === '1'
+
+        // Show welcome ONLY on true first login (no last_login_at) and once per browser
+        if (hasBiz && setupComplete && isOwner && !lastLogin && !welcomeSeen) {
+          setShowWelcome(true)
+        }
+        
         // Unified: if approved but no business, force setup for all users
         setNeedsSetup(!hasBiz)
         setMissingBusiness(false)
@@ -460,6 +473,18 @@ export default function AppLayout() {
     if (approvedChecked && isApproved === false) {
       return <Navigate to="/pending-approval" replace />
     }
+  }
+
+  // Show welcome animation for first-time business owners
+  if (showWelcome) {
+    return (
+      <WelcomeAnimation
+        onComplete={() => {
+          try { window.localStorage.setItem('inch_welcome_shown', '1') } catch {}
+          setShowWelcome(false)
+        }}
+      />
+    )
   }
 
   // If approved but setup is incomplete (no business linked), send to setup

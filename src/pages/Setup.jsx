@@ -21,6 +21,7 @@ export default function Setup() {
 
   // Owner flow
   const [submitting, setSubmitting] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
   const [form, setForm] = useState({
     businessName: "",
     ownerName: "",
@@ -135,7 +136,11 @@ export default function Setup() {
         .eq('auth_user_id', authUser.id)
       if (linkErr) throw linkErr
 
-      navigate('/dashboard', { replace: true })
+      // Set redirecting state and delay navigation to prevent flickering
+      setRedirecting(true)
+      setTimeout(() => {
+        navigate('/dashboard', { replace: true })
+      }, 500)
     } catch (e) {
       setError(e.message || 'Failed to create business')
     } finally {
@@ -207,7 +212,11 @@ export default function Setup() {
         .update({ used_count: (codeRow.used_count || 0) + 1 })
         .eq('id', codeRow.id)
 
-      navigate('/dashboard', { replace: true })
+      // Set redirecting state and delay navigation to prevent flickering
+      setRedirecting(true)
+      setTimeout(() => {
+        navigate('/dashboard', { replace: true })
+      }, 500)
     } catch (e) {
       console.warn('joinByCode error:', e)
       setError(e.message || 'Failed to join business')
@@ -318,8 +327,10 @@ export default function Setup() {
             </div>
             {error && <div className="text-xs text-red-300 bg-red-900/30 border border-red-700/40 rounded p-2">{error}</div>}
             <div className="flex items-center gap-3">
-              <button type="submit" disabled={validatingCode} className={`px-4 py-2 rounded-md text-sm pill-active glow ${validatingCode ? 'opacity-60' : ''}`}>{validatingCode ? 'Validating…' : 'Join team'}</button>
-              <button type="button" onClick={() => { setUserType(null); setError("") }} className="text-sm text-white/70 hover:text-white">Back</button>
+              <button type="submit" disabled={validatingCode || redirecting} className={`px-4 py-2 rounded-md text-sm pill-active glow ${(validatingCode || redirecting) ? 'opacity-60' : ''}`}>
+                {redirecting ? 'Joining team...' : validatingCode ? 'Validating…' : 'Join team'}
+              </button>
+              <button type="button" onClick={() => { setUserType(null); setError("") }} className="text-sm text-white/70 hover:text-white" disabled={validatingCode || redirecting}>Back</button>
             </div>
           </form>
         </div>
@@ -378,8 +389,10 @@ export default function Setup() {
           <input className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </div>
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={submitting} className={`px-4 py-2 rounded-md text-sm pill-active glow ${submitting ? 'opacity-60' : ''}`}>{submitting ? 'Creating…' : 'Create and continue'}</button>
-          <button type="button" onClick={() => { setUserType(null); setError("") }} className="text-sm text-white/70 hover:text-white">Back</button>
+          <button type="submit" disabled={submitting || redirecting} className={`px-4 py-2 rounded-md text-sm pill-active glow ${(submitting || redirecting) ? 'opacity-60' : ''}`}>
+            {redirecting ? 'Redirecting to dashboard...' : submitting ? 'Creating…' : 'Create and continue'}
+          </button>
+          <button type="button" onClick={() => { setUserType(null); setError("") }} className="text-sm text-white/70 hover:text-white" disabled={submitting || redirecting}>Back</button>
         </div>
       </form>
     </div>

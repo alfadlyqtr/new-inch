@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
 import { supabase } from "../lib/supabaseClient.js"
+import { runTourOnce, tourKey } from "../lib/tour.js"
 
 // Simple inline icons
 const IconBriefcase = (props) => (
@@ -82,6 +83,48 @@ export default function Settings() {
 
   // Local storage key helper to ensure per-user scoping (avoid global bleed between users)
   const getLsKey = (k) => (userRow?.id ? `u:${userRow.id}:${k}` : k)
+
+  // One-time guided tour for Settings page
+  useEffect(() => {
+    if (loading) return
+    // Gate by page key; per-browser once
+    const key = tourKey('settings')
+    const steps = [
+      {
+        element: '#settings-tabs',
+        popover: {
+          title: 'Settings Sections',
+          description: 'Navigate between Business, User, Invoice, and Appearance settings.',
+          side: 'bottom',
+        },
+      },
+      {
+        element: '#settings-business-logo',
+        popover: {
+          title: 'Business Logo',
+          description: 'Upload your business logo. Owners only.',
+          side: 'right',
+        },
+      },
+      {
+        element: '#settings-save-business',
+        popover: {
+          title: 'Save Business Info',
+          description: 'Persist changes like owner name, phone, and address.',
+          side: 'top',
+        },
+      },
+      {
+        element: '#settings-appearance-tab',
+        popover: {
+          title: 'Appearance',
+          description: 'Customize theme, gradient angle, and glow to match your brand.',
+          side: 'bottom',
+        },
+      },
+    ]
+    runTourOnce(key, steps)
+  }, [loading])
 
   // One-time load from backend
   useEffect(() => {
@@ -181,8 +224,8 @@ export default function Settings() {
           if (profile.language) setUserLang(profile.language)
           if (profile.avatar_url) setAvatarUrl(`${profile.avatar_url}?v=${Date.now()}`)
         } else {
-          // Ensure settings row exists
-          await supabase.from("user_settings").insert({ user_id: user.id })
+          // Ensure settings row exists via secured RPC (self-only)
+          await supabase.rpc('api_user_settings_ensure')
         }
       } catch (_e) {
         // Optionally log
@@ -197,18 +240,15 @@ export default function Settings() {
     if (!userRow || !userRow.business_id) return
     // Only business owners can save
     if (!userRow.is_business_owner) return
-    await supabase
-      .from("business")
-      .update({
-        owner_name: ownerNameInput || null,
-        contact_phone: businessPhone || null,
-        address: businessAddress || null,
-        logo_url: logoUrl || null,
-      })
-      .eq("id", userRow.business_id)
-    // Keep users_app.owner_name in sync if provided
+    // Update business info via secured RPC
+    await supabase.rpc('api_business_update_info', {
+      p_owner_name: ownerNameInput || null,
+      p_contact_phone: businessPhone || null,
+      p_address: businessAddress || null,
+    })
+    // Update my display name (owner path) via secured RPC
     if (ownerNameInput && ownerNameInput !== userRow.owner_name) {
-      await supabase.from("users_app").update({ owner_name: ownerNameInput }).eq("id", userRow.id)
+      await supabase.rpc('api_me_update_display_name', { p_owner_name: ownerNameInput, p_staff_name: null })
     }
   }
 
@@ -217,25 +257,16 @@ export default function Settings() {
     try {
       setSavingUserProfile(true)
       setUserError("")
-      // Read current minimal settings and merge so we don't clobber other columns
-      const { data: existing } = await supabase
-        .from("user_settings")
-        .select("user_profile, appearance_settings")
-        .eq("user_id", userRow.id)
-        .limit(1)
-        .maybeSingle()
-      const mergedProfile = { ...(existing?.user_profile || {}), language: userLang, avatar_url: avatarUrl || null }
-      const { error: upErr } = await supabase.from("user_settings").upsert({
-        user_id: userRow.id,
-        user_profile: mergedProfile
-      }, { onConflict: "user_id" })
-      if (upErr) throw upErr
-      // Sync display name to users_app
+      // Merge profile via secured RPC
+      const mergedProfile = { language: userLang, avatar_url: avatarUrl || null }
+      const { error: mergeErr } = await supabase.rpc('api_user_settings_merge_profile', { p_user_profile: mergedProfile })
+      if (mergeErr) throw mergeErr
+      // Update my display name via secured RPC
       if (userRow.is_business_owner) {
-        const { error } = await supabase.from("users_app").update({ owner_name: userDisplayName || null }).eq("id", userRow.id)
+        const { error } = await supabase.rpc('api_me_update_display_name', { p_owner_name: userDisplayName || null, p_staff_name: null })
         if (error) throw error
       } else {
-        const { error } = await supabase.from("users_app").update({ staff_name: userDisplayName || null }).eq("id", userRow.id)
+        const { error } = await supabase.rpc('api_me_update_display_name', { p_owner_name: null, p_staff_name: userDisplayName || null })
         if (error) throw error
       }
       // Apply language immediately
@@ -276,17 +307,8 @@ export default function Settings() {
       setAvatarUrl(freshUrl)
       // Auto-save avatar to user_settings (minimal merge)
       try {
-        const { data: existing } = await supabase
-          .from("user_settings")
-          .select("user_profile")
-          .eq("user_id", userRow.id)
-          .limit(1)
-          .maybeSingle()
-        const mergedProfile = { ...(existing?.user_profile || {}), avatar_url: freshUrl }
-        await supabase.from("user_settings").upsert({
-          user_id: userRow.id,
-          user_profile: mergedProfile
-        }, { onConflict: "user_id" })
+        // Persist avatar via secured RPC merge
+        await supabase.rpc('api_user_settings_merge_profile', { p_user_profile: { avatar_url: freshUrl } })
         // Fire a local event so the sidebar updates instantly (no flicker, no manual refresh)
         try { window.dispatchEvent(new CustomEvent('avatar-updated', { detail: { url: freshUrl } })) } catch {}
       } catch { /* ignore */ }
@@ -356,8 +378,8 @@ export default function Settings() {
       const publicUrl = pub?.publicUrl || ""
       if (!publicUrl) throw new Error("Could not get public URL")
 
-      // Persist on business row
-      await supabase.from("business").update({ logo_url: publicUrl }).eq("id", userRow.business_id)
+      // Persist on business row via secured RPC
+      await supabase.rpc('api_business_update_logo', { p_logo_url: publicUrl })
       setLogoUrl(publicUrl)
     } catch (e) {
       console.error("Logo upload failed", e)
@@ -379,20 +401,13 @@ export default function Settings() {
       payment_terms: paymentTerms || null,
       footer: invoiceFooter || null,
     }
-    // upsert into user_settings
-    await supabase.from("user_settings").upsert({
-      user_id: userRow.id,
-      invoice_settings: invoice,
-    }, { onConflict: "user_id" })
+    // Set invoice via secured RPC
+    await supabase.rpc('api_user_settings_set_invoice', { p_invoice: invoice })
   }
 
   async function saveNotifications() {
     if (!userRow) return
-    await supabase.from("user_settings").upsert({
-      user_id: userRow.id,
-      email_notifications: !!emailNotif,
-      push_notifications: !!pushNotif,
-    }, { onConflict: "user_id" })
+    await supabase.rpc('api_user_settings_set_notifications', { p_email: !!emailNotif, p_push: !!pushNotif })
   }
 
   async function saveAppearance() {
@@ -410,10 +425,7 @@ export default function Settings() {
           depth: Number(glowDepth) || 60,
         },
       }
-      const { error } = await supabase.from("user_settings").upsert({
-        user_id: userRow.id,
-        appearance_settings: payload,
-      }, { onConflict: "user_id" })
+      const { error } = await supabase.rpc('api_user_settings_set_appearance', { p_appearance: payload })
       if (error) throw error
       setAppearanceNotice("Saved appearance ✓")
     } catch (e) {
@@ -510,7 +522,7 @@ export default function Settings() {
       <div className="glass rounded-2xl border border-white/10 p-6">
         <h1 className="text-xl font-semibold text-white/90">Settings</h1>
         <p className="text-sm text-slate-400 mt-1">Application & business settings.</p>
-        <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Settings sections">
+        <div id="settings-tabs" className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Settings sections">
           {tabs.map(t => (
             <button
               key={t.id}
@@ -518,6 +530,7 @@ export default function Settings() {
               aria-selected={active === t.id}
               onClick={() => setActive(t.id)}
               className={`px-3 py-1.5 rounded-md text-xs border transition flex items-center gap-1.5 ${active === t.id ? "pill-active glow border-transparent" : "border-white/10 text-white/80 hover:bg-white/10"}`}
+              id={t.id === 'appearance' ? 'settings-appearance-tab' : undefined}
             >
               {t.Icon ? <t.Icon className="w-3.5 h-3.5" /> : null}
               <span>{t.label}</span>
@@ -563,6 +576,7 @@ export default function Settings() {
                 onClick={() => logoInputRef.current?.click()}
                 disabled={uploadingLogo || loading || !userRow?.business_id || !userRow?.is_business_owner}
                 className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-60"
+                id="settings-business-logo"
               >{uploadingLogo ? "Uploading…" : "Upload Photo"}</button>
             </div>
           </div>
@@ -604,7 +618,7 @@ export default function Settings() {
           </div>
         </div>
         <div className="mt-6 flex justify-end">
-          <button onClick={saveBusiness} disabled={loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Business Info</button>
+          <button id="settings-save-business" onClick={saveBusiness} disabled={loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Business Info</button>
         </div>
       </section>
       )}

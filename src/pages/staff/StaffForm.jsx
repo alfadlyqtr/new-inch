@@ -214,119 +214,20 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
 
     setSubmitting(true)
     try {
-      const completePermissions = ensureCompletePermissions(formData.permissions)
-      // robust numeric coercions
-      const toNumberOrNull = (v) => {
-        if (v === '' || v === undefined || v === null) return null
-        const n = Number(v)
-        return Number.isFinite(n) ? n : null
-      }
-      const toNumberOrDefault = (v, def) => {
-        if (v === '' || v === undefined || v === null) return def
-        const n = Number(v)
-        return Number.isFinite(n) ? n : def
-      }
-
-      const dataToSave = {
-        business_id: businessId,
-        name: formData.name,
-        email: formData.email || '',
-        phone: formData.phone || '',
-        address: formData.address || '',
-        role: formData.role,
-        custom_role_title: formData.custom_role_title || '',
-        nationality: formData.nationality || '',
-        joining_date: joiningDate ? new Date(joiningDate).toISOString().slice(0,10) : null,
-        date_of_birth: normalizeDate(formData.date_of_birth),
-        passport_number: formData.passport_number || '',
-        passport_issue_date: normalizeDate(formData.passport_issue_date),
-        passport_expiry: normalizeDate(formData.passport_expiry),
-        id_number: formData.id_number || '',
-        id_expiry: normalizeDate(formData.id_expiry),
-        license_number: formData.license_number || '',
-        license_expiry: normalizeDate(formData.license_expiry),
-        notes: formData.notes || '',
-        document_info_notes: formData.document_info_notes || '',
-        salary: toNumberOrNull(formData.salary),
-        leave_balance: toNumberOrDefault(formData.leave_balance, 30),
-        targets: {
-          monthly: toNumberOrNull(formData.targets?.monthly),
-          quarterly: toNumberOrNull(formData.targets?.quarterly),
-          yearly: toNumberOrNull(formData.targets?.yearly),
-        },
-        ticket_entitlements: {
-          annual_entitlement: toNumberOrDefault(formData.ticket_entitlements?.annual_entitlement, 1),
-          tickets_used: toNumberOrDefault(formData.ticket_entitlements?.tickets_used, 0),
-        },
-        documents: formData.documents || {},
-        emergency_contact: formData.emergency_contact || {},
-        loans: formData.loans || [],
-        permissions: completePermissions,
-        invitation_status: 'pending',
-      }
-
-      const { data: inserted, error } = await supabase
-        .from('staff')
-        .insert(dataToSave)
-        .select('id')
-        .single()
+      // Use secured RPC to create a staff invite (permission-enforced)
+      const { error } = await supabase.rpc('api_staff_invite_create', {
+        p_business_id: businessId,
+        p_name: formData.name,
+        p_email: formData.email || '',
+        p_role: formData.role || 'staff',
+      })
       if (error) throw error
 
-      // Link back to users_app so UI can resolve by staff_id (prefer strong linkage over email-only)
-      try {
-        if (dataToSave.email) {
-          const { error: linkErr } = await supabase
-            .from('users_app')
-            .update({ staff_id: inserted.id })
-            .eq('business_id', businessId)
-            .eq('email', dataToSave.email)
-          if (linkErr) console.warn('users_app.staff_id link failed (non-fatal)', linkErr)
-        }
-      } catch (ee) {
-        console.warn('users_app.staff_id link threw (non-fatal)', ee)
-      }
-
-      // insert staff_documents for uploaded files, if any (best-effort)
-      if (uploadedDocs.length) {
-        try {
-          const docsPayload = uploadedDocs.map(d => ({
-            staff_id: inserted.id,
-            type: d.doc_type,
-            file_url: d.url,
-            verified: false,
-            issued_on: null,
-            expires_on: null,
-            extracted: {},
-          }))
-          const { error: docErr } = await supabase
-            .from('staff_documents')
-            .insert(docsPayload)
-          if (docErr) console.warn('staff_documents insert failed', docErr)
-        } catch (ee) {
-          console.warn('staff_documents insert threw', ee)
-        }
-      }
-
-      // generate business code (12h, single use)
-      const code = `INCH-${inserted.id.slice(0,4).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}`
-      const expiresAt = new Date(); expiresAt.setHours(expiresAt.getHours()+12)
-      const { error: codeErr } = await supabase.from('business_code').insert({
-        business_id: businessId,
-        code,
-        created_by: null,
-        expires_at: expiresAt.toISOString(),
-        max_uses: 1,
-        is_active: true,
-      })
-      if (codeErr) console.warn('business_code insert failed', codeErr)
-
-      setNotice("Staff invited ✔")
-      setTimeout(()=>setNotice(""), 1200)
-      if (onCreated) onCreated({ id: inserted.id, code })
-      setSuccessData({
-        staffMember: { name: formData.name, email: formData.email },
-        businessCode: { code, expires_at: expiresAt.toISOString() },
-      })
+      setNotice('Invitation created ✔')
+      setTimeout(()=>setNotice(''), 1000)
+      if (onCreated) onCreated()
+      // Close and rely on parent list refresh; optional success view skipped
+      if (typeof onClose === 'function') onClose()
     } catch (err) {
       console.error(err)
       setNotice(err?.message ? `Save failed: ${err.message}` : "Failed to save. Please try again.")

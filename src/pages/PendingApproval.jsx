@@ -191,7 +191,16 @@ export default function PendingApproval() {
 
       <main className="max-w-xl mx-auto p-6">
         <div className="mt-6 flex justify-center">
-          <div className="h-16 w-16 rounded-2xl glow bg-gradient-to-tr from-brand-primary to-brand-fuchsia ring-1 ring-white/25" />
+          <div className="h-24 w-24 rounded-2xl border-2 border-white/10 bg-white/5 p-2 flex items-center justify-center">
+            <img 
+              src="/logo.jpg" 
+              alt="INCH Logo" 
+              className="h-full w-full rounded-full object-cover shadow-lg"
+              style={{
+                boxShadow: '0 0 30px 5px rgba(192, 38, 211, 0.6)'
+              }}
+            />
+          </div>
         </div>
 
         <section className="mt-6 glass rounded-3xl border border-white/10 p-6">

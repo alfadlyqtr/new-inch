@@ -144,11 +144,11 @@ export default function Staff() {
         // Backfill users_app.staff_id
         try {
           if (!maybeStaffId && email) {
-            await supabase
-              .from('users_app')
-              .update({ staff_id: data.id })
-              .eq('business_id', bizId)
-              .eq('email', email)
+            await supabase.rpc('api_users_app_backfill_staff_id', {
+              p_business_id: bizId,
+              p_email: email,
+              p_staff_id: data.id,
+            })
           }
         } catch {}
       } else {
@@ -201,18 +201,14 @@ export default function Staff() {
     setGenSubmitting(true)
     setGenNotice('')
     try {
-      const payload = {
-        code,
-        business_id: businessId,
-        created_by: userRow.id,
-        staff_id: null,
-        email: genEmail?.trim() || null,
-        expires_at: expiresAt,
-        max_uses: maxUses,
-        used_count: 0,
-        is_active: true,
-      }
-      const { error } = await supabase.from('business_codes').insert(payload)
+      const { error } = await supabase.rpc('api_business_code_create', {
+        p_code: code,
+        p_business_id: businessId,
+        p_created_by: userRow.id,
+        p_email: genEmail?.trim() || null,
+        p_expires_at: expiresAt,
+        p_max_uses: maxUses,
+      })
       if (error) throw error
       setGenNotice(`Code generated: ${code}`)
       await loadCodes(businessId)
@@ -231,7 +227,7 @@ export default function Staff() {
     // optimistic UI
     setCodes((prev) => prev.filter(c => c.id !== id))
     try {
-      const { error } = await supabase.from('business_codes').delete().eq('id', id)
+      const { error } = await supabase.rpc('api_business_code_delete', { p_code_id: id })
       if (error) throw error
       // ensure state reflects server
       await loadCodes(businessId)
@@ -300,9 +296,7 @@ export default function Staff() {
       if (toAccept.length > 0) {
         try {
           const ids = toAccept.map(i => i.id)
-          await supabase.from('staff')
-            .update({ invitation_status: 'accepted' })
-            .in('id', ids)
+          await supabase.rpc('api_staff_invite_mark_accepted', { p_ids: ids })
         } catch (_) { /* ignore non-fatal */ }
       }
     } catch (_e) {
@@ -318,26 +312,9 @@ export default function Staff() {
       // Optimistic UI: remove locally first
       setInvited((prev) => prev.filter((x) => x.id !== id))
 
-      // 1) delete dependent documents (FK constraint safe)
-      const { data: docsDeleted, error: docErr } = await supabase
-        .from('staff_documents')
-        .delete()
-        .eq('staff_id', id)
-        .select('id')
-      if (docErr) throw docErr
-      console.log('delete:docs_ok', docsDeleted?.length ?? 0)
-
-      // 2) delete staff row
-      const { data: staffDeleted, error: staffErr } = await supabase
-        .from('staff')
-        .delete()
-        .eq('id', id)
-        .select('id')
-      if (staffErr) throw staffErr
-      if (!staffDeleted || staffDeleted.length === 0) {
-        throw new Error('Delete blocked by permissions or constraints (0 rows affected).')
-      }
-      console.log('delete:staff_ok', staffDeleted?.length ?? 0)
+      // Server-side cascade and permission enforcement
+      const { error } = await supabase.rpc('api_staff_invite_delete', { p_staff_id: id })
+      if (error) throw error
 
       // 3) refresh from server to ensure consistency
       await loadInvited(businessId)
@@ -363,16 +340,12 @@ export default function Staff() {
     setSubmittingInvite(true)
     setInviteNotice("")
     try {
-      const payload = {
-        business_id: businessId,
-        name: inviteName.trim(),
-        email: inviteEmail.trim(),
-        role: inviteRole || null,
-        invitation_status: 'pending',
-        is_active: true,
-        permissions: {},
-      }
-      const { error } = await supabase.from('staff').insert(payload)
+      const { error } = await supabase.rpc('api_staff_invite_create', {
+        p_business_id: businessId,
+        p_name: inviteName.trim(),
+        p_email: inviteEmail.trim(),
+        p_role: inviteRole || 'staff',
+      })
       if (error) throw error
       setInviteNotice("Invitation created ✓")
       // reset form and close

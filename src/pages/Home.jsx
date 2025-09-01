@@ -8,11 +8,21 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-4">
           <div className="flex h-16 items-center justify-between">
             <Link to="/" className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-brand-primary to-brand-fuchsia flex items-center justify-center shadow-md">
-                <span className="text-sm font-bold">IN</span>
+              <div className="relative">
+                <div className="absolute inset-0 rounded-full bg-brand-fuchsia/30 blur-md animate-pulse-slow"></div>
+                <img 
+                  src="/logo.jpg" 
+                  alt="INCH Logo" 
+                  className="relative h-9 w-9 rounded-full object-cover shadow-lg transform hover:rotate-6 hover:scale-110 transition-all duration-500"
+                  style={{
+                    transformStyle: 'preserve-3d',
+                    boxShadow: '0 0 20px 5px rgba(192, 38, 211, 0.5)',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                  }}
+                />
               </div>
               <div className="leading-tight">
-                <div className="font-semibold">INCH</div>
+                <div className="font-semibold bg-gradient-to-r from-brand-primary to-brand-fuchsia bg-clip-text text-transparent">INCH</div>
                 <div className="text-[10px] text-slate-300">Tailoring Management System</div>
               </div>
             </Link>
@@ -33,8 +43,22 @@ export default function Home() {
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-6xl px-4 py-20 md:py-28">
           <div className="mx-auto max-w-3xl text-center">
-            <div className="mx-auto mb-4 w-12 h-12 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center">
-              <span className="text-xl">👤</span>
+            <div className="mx-auto mb-4 w-24 h-24 rounded-full border-2 border-white/20 bg-white/5 flex items-center justify-center transform hover:rotate-6 hover:scale-105 transition-all duration-500"
+              style={{
+                transformStyle: 'preserve-3d',
+                boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.25)',
+                perspective: '1000px',
+                background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.1), transparent 70%)'
+              }}
+            >
+              <img 
+                src="/logo.jpg" 
+                alt="INCH Logo" 
+                className="h-16 w-16 rounded-full object-cover"
+                style={{
+                  transform: 'translateZ(20px)'
+                }}
+              />
             </div>
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">Effortless Customer Management</h1>
             <p className="mt-2 text-brand-fuchsia/90 font-semibold">Never Lose Track Again</p>
@@ -42,7 +66,14 @@ export default function Home() {
             <div className="mt-8 flex items-center justify-center gap-3">
               <Link to="/signup" className="pill-active glow px-5 py-3 rounded-full font-medium">Get Started Now →</Link>
             </div>
-            <div className="mt-8 text-xs text-slate-400">Trusted by tailors worldwide • 4.9/5 rating</div>
+            <div className="mt-8 flex items-center justify-center gap-1 text-yellow-300">
+              {[...Array(5)].map((_, i) => (
+                <svg key={i} className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+              ))}
+              <span className="ml-2 text-sm text-slate-300">Trusted by tailors worldwide</span>
+            </div>
           </div>
         </div>
       </section>
@@ -90,7 +121,7 @@ export default function Home() {
           <div className="mx-auto max-w-2xl">
             <div className="glass rounded-2xl border border-white/10 p-8">
               <div className="text-center">
-                <div className="text-5xl font-extrabold text-brand-fuchsia drop-shadow">3,000 QAR</div>
+                <div className="text-5xl font-extrabold text-brand-fuchsia drop-shadow">5,000 QAR</div>
                 <div className="text-slate-400 mt-1">per year • Billed annually • Save 20%</div>
               </div>
               <ul className="mt-6 grid md:grid-cols-2 gap-2 text-sm text-slate-300">
@@ -147,9 +178,11 @@ export default function Home() {
           <div className="grid md:grid-cols-4 gap-6 text-sm text-slate-300">
             <div className="col-span-2">
               <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-full bg-gradient-to-br from-brand-primary to-brand-fuchsia flex items-center justify-center shadow-md">
-                  <span className="text-sm font-bold">IN</span>
-                </div>
+                <img 
+                  src="/logo.jpg" 
+                  alt="INCH Logo" 
+                  className="h-9 w-9 rounded-full object-cover shadow-md"
+                />
                 <div>
                   <div className="font-semibold text-white/90">INCH</div>
                   <div className="text-[11px]">Tailoring Management System</div>
