@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 
@@ -11,6 +11,7 @@ export default function Signup() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [redirecting, setRedirecting] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -21,40 +22,24 @@ export default function Signup() {
     if (password !== confirm) { setError("Passwords do not match"); return }
     setLoading(true)
     try {
-      // Fire a raw GoTrue signup in parallel to capture the exact server error/status
-      const base = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '')
-      const key = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
-      const rawSignup = fetch(`${base}/auth/v1/signup?redirect_to=${encodeURIComponent(window.location.origin + '/auth')}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: key },
-        body: JSON.stringify({ email, password, data: { full_name: name } }),
-      }).then(async (r) => ({ raw: true, status: r.status, ok: r.ok, json: await r.json().catch(() => ({})) }))
-
-      const sdkSignup = supabase.auth.signUp({
+      // Single SDK signup call to prevent duplicate/racy requests that cause false 409 errors
+      const { data, error: signErr } = await supabase.auth.signUp({
         email,
         password,
         options: { data: { full_name: name }, emailRedirectTo: window.location.origin + '/auth' },
       })
-      const timeout = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000))
-
-      // First race to avoid spinner hang
-      const first = await Promise.race([sdkSignup, rawSignup, timeout])
-      if (first?.timeout) { throw new Error('Signup timed out. Check your connection and project settings.') }
-
-      // Then await both for more detailed error reporting
-      const [sdkRes, rawRes] = await Promise.allSettled([sdkSignup, rawSignup])
-      const rawVal = rawRes.status === 'fulfilled' ? rawRes.value : null
-      const sdkVal = sdkRes.status === 'fulfilled' ? sdkRes.value : null
-      if (rawVal?.raw && !rawVal.ok) {
-        const msg = rawVal?.json?.error_description || rawVal?.json?.msg || JSON.stringify(rawVal.json)
-        throw new Error(`Signup rejected (${rawVal.status}): ${msg}`)
+      if (signErr) {
+        const msg = (signErr?.message || '').toLowerCase()
+        // Graceful handling for already-registered addresses
+        if (msg.includes('already registered') || msg.includes('user already exists') || msg.includes('duplicate')) {
+          setSuccess('This email is already registered. If you have not confirmed yet, please check your inbox or spam for the confirmation email. Otherwise, you can sign in.')
+          return
+        }
+        throw signErr
       }
-      if (sdkVal?.error) throw sdkVal.error
-      const data = sdkVal?.data || {}
 
       const userId = data.user?.id || null
-      // Create or update users_app profile row (idempotent to avoid 409 conflicts)
-      // Only attempt when we have a session (avoids RLS issues pre-confirmation)
+      // Create or update users_app profile row (idempotent). Only when session exists.
       try {
         const { data: s } = await supabase.auth.getSession()
         const hasSession = !!s?.session?.user
@@ -68,13 +53,23 @@ export default function Signup() {
         }
       } catch (_e) { /* non-blocking */ }
 
-      setSuccess("Account created. Please confirm your email (subject: INCH). Check your inbox or junk folder.")
+      setSuccess("Account created! Please confirm your email (subject: INCH). Check your inbox or spam folder, then sign in.")
     } catch (e) {
       setError(e.message || "Failed to sign up")
     } finally {
       setLoading(false)
     }
   }
+
+  // After showing success, wait 5s and redirect to Sign In
+  useEffect(() => {
+    if (!success) return
+    setRedirecting(true)
+    const t = setTimeout(() => {
+      navigate('/auth', { replace: true })
+    }, 5000)
+    return () => clearTimeout(t)
+  }, [success, navigate])
 
   return (
     <div className="min-h-screen bg-app text-white/90">
@@ -97,6 +92,21 @@ export default function Signup() {
           </div>
         </div>
       </header>
+
+      {/* Success toast */}
+      {success && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-50 rounded-md border border-emerald-700/40 bg-emerald-900/80 text-green-300 backdrop-blur px-4 py-3 shadow-lg"
+        >
+          <div className="text-xs">
+            <div className="font-medium text-green-200">Account created!</div>
+            <div>Please confirm your email (subject: INCH). Check your inbox or spam folder, then sign in.</div>
+            <div className="opacity-80 mt-1">Redirecting to Sign In…</div>
+          </div>
+        </div>
+      )}
 
       {/* Signup card */}
       <main className="mx-auto max-w-md px-4 py-14">
@@ -154,7 +164,7 @@ export default function Signup() {
             </div>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || redirecting}
               className={`w-full px-3 py-2 rounded-md text-sm pill-active glow ${loading ? "opacity-60" : ""}`}
             >
               {loading ? "Creating account…" : "Create account"}

@@ -206,21 +206,24 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
   async function handleSubmit(e){
     e.preventDefault()
     if (!businessId) { setNotice("Missing business context"); return }
-    if (!formData.name || !formData.role) {
-      setNotice("Name and Role are required")
+    const email = (formData.email || '').trim()
+    if (!formData.name || !formData.role || !email) {
+      setNotice(!email ? "Email is required" : "Name and Role are required")
       setTimeout(()=>setNotice(""), 1600)
       return
     }
 
     setSubmitting(true)
     try {
-      // Use secured RPC to create a staff invite (permission-enforced)
-      const { error } = await supabase.rpc('api_staff_invite_create', {
-        p_business_id: businessId,
-        p_name: formData.name,
-        p_email: formData.email || '',
-        p_role: formData.role || 'staff',
-      })
+      // Direct insert into staff to create the canonical staff profile
+      const payload = {
+        business_id: businessId,
+        email,
+        name: formData.name,
+        role: formData.role || 'staff',
+        invitation_status: 'invited',
+      }
+      const { error } = await supabase.from('staff').insert(payload).select('id').single()
       if (error) throw error
 
       setNotice('Invitation created ✔')
@@ -229,8 +232,9 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
       // Close and rely on parent list refresh; optional success view skipped
       if (typeof onClose === 'function') onClose()
     } catch (err) {
-      console.error(err)
-      setNotice(err?.message ? `Save failed: ${err.message}` : "Failed to save. Please try again.")
+      console.error('staff invite create error', err)
+      const msg = err?.message || err?.error_description || 'Failed to save. Please try again.'
+      setNotice(`Save failed: ${msg}`)
       setTimeout(()=>setNotice(""), 2000)
     } finally {
       setSubmitting(false)
@@ -283,8 +287,8 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
               value={formData.date_of_birth} onChange={e=>handleInputChange('date_of_birth', e.target.value)} placeholder="e.g., 1982-05-15" />
           </div>
           <div className="space-y-2">
-            <div className="text-xs text-slate-400">Email</div>
-            <input type="email" className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+            <div className="text-xs text-slate-400">Email *</div>
+            <input type="email" required className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
               value={formData.email} onChange={e=>handleInputChange('email', e.target.value)} />
           </div>
           <div className="space-y-2">

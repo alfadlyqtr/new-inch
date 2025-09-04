@@ -8,20 +8,32 @@ export default function AdminAuth() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [debug, setDebug] = useState("")
+  const projectUrl = import.meta.env.VITE_SUPABASE_URL
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError("")
+    setDebug("")
     setLoading(true)
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    console.debug('[AdminAuth] signIn start', { email })
+    const { data, error: signErr } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) {
-      setError(error.message)
+    if (signErr) {
+      console.error('[AdminAuth] signIn error', signErr)
+      setError(signErr.message || 'Sign-in failed')
+      setDebug(`${signErr.name || 'Error'}: ${signErr.status || ''} ${signErr.message || ''}`.trim())
       return
     }
-    if (data?.user) {
-      navigate("/platform-admin", { replace: true })
+    console.debug('[AdminAuth] signIn success', { user: !!data?.user, session: !!data?.session })
+    if (!data?.user) {
+      const { data: sess } = await supabase.auth.getSession()
+      setError('Signed in but no user returned. Please try again.')
+      setDebug(`No user in auth response. session.user: ${sess?.session?.user?.id || 'null'} | project: ${projectUrl}`)
+      return
     }
+    // Simple: on sign-in success, go straight to admin
+    navigate("/platform-admin", { replace: true })
   }
   return (
     <div className="min-h-screen bg-app text-white/90">
@@ -56,6 +68,7 @@ export default function AdminAuth() {
           {error && (
             <div className="mt-4 text-xs text-red-300 bg-red-900/30 border border-red-700/40 rounded p-2">
               {error}
+              {debug && (<div className="mt-1 text-[10px] text-red-200/80">{debug}</div>)}
             </div>
           )}
           <form onSubmit={handleSubmit} className="mt-6 space-y-3">

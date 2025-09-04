@@ -79,9 +79,11 @@ export default function AppLayout() {
   }, [i18n])
 
   useEffect(() => {
+    // Avoid re-render ticking on setup page to prevent flicker
+    if (hideNav) return
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
-  }, [])
+  }, [hideNav])
 
   useEffect(() => {
     let isMounted = true
@@ -299,6 +301,7 @@ export default function AppLayout() {
         const hasBiz = !!row?.business_id
         const isOwner = !!row?.is_business_owner
         const setupComplete = !!row?.setup_completed
+        const tempSetupDone = (typeof window !== 'undefined') && (window.sessionStorage?.getItem('inch_setup_done') === '1' || window.localStorage?.getItem('inch_setup_done') === '1')
         const lastLogin = row?.last_login_at
         const welcomeSeen = (typeof window !== 'undefined') && window.localStorage?.getItem('inch_welcome_shown') === '1'
 
@@ -307,8 +310,18 @@ export default function AppLayout() {
           setShowWelcome(true)
         }
         
-        // Unified: if approved but no business, force setup for all users
-        setNeedsSetup(!hasBiz)
+        // If backend not yet reflected but we know we just finished setup, temporarily bypass needsSetup
+        if (!hasBiz && tempSetupDone) {
+          setNeedsSetup(false)
+        } else {
+          // Unified: if approved but no business, force setup for all users
+          setNeedsSetup(!hasBiz)
+        }
+
+        // Once backend confirms setup complete, clear the temporary flag
+        if (hasBiz && setupComplete) {
+          try { window.sessionStorage.removeItem('inch_setup_done'); window.localStorage.removeItem('inch_setup_done') } catch {}
+        }
         setMissingBusiness(false)
       } finally {
         if (!cancelled) setSetupChecked(true)
@@ -390,6 +403,8 @@ export default function AppLayout() {
 
   // Heartbeat: mark user online and update last seen every 60s
   useEffect(() => {
+    // Skip network heartbeats on setup page to keep it static
+    if (hideNav) return
     let cancelled = false
     let interval
     ;(async () => {
@@ -411,7 +426,7 @@ export default function AppLayout() {
       } catch { /* noop */ }
     })()
     return () => { cancelled = true; if (interval) clearInterval(interval) }
-  }, [])
+  }, [hideNav])
 
   // Instant local update: listen for avatar-updated and swap after preloading (no flicker)
   useEffect(() => {
@@ -510,24 +525,26 @@ export default function AppLayout() {
   const canSeeRoute = (to) => {
     // Always allow dashboard and settings
     if (to.startsWith('/dashboard') || to.startsWith('/settings')) return true
-    // Hide legacy Staff menu for everyone (owner and staff)
     const mod = routeToModule(to)
-    if (mod === 'staff') return false
+    // Allow Staff management only for Business Owners
+    if (mod === 'staff') return !!userIsOwner
     // Owners can see everything else
     if (userIsOwner) return true
     if (!mod) return true
     return !!staffPerms?.[mod]?.view
   }
 
-  // Ensure BO always sees all except legacy Staff.
-  // If user is not explicitly a staff account and perms are not yet loaded, show full nav (minus Staff).
-  const showAllMinusStaff = userIsOwner || (!userLoaded) || (isStaffAccount !== true)
-  const visibleNav = showAllMinusStaff
-    ? navItems.filter(n => n.to !== '/staff')
-    : navItems.filter(n => canSeeRoute(n.to))
+  // Owners see all items including Staff; others are permission-based with Staff hidden.
+  const visibleNav = userIsOwner
+    ? navItems
+    : ((!userLoaded) || (isStaffAccount !== true))
+      ? navItems.filter(n => n.to !== '/staff')
+      : navItems.filter(n => canSeeRoute(n.to))
 
   // Debug (remove later)
-  console.debug('[AppLayout] userLoaded:', userLoaded, 'userIsOwner:', userIsOwner, 'isStaffAccount:', isStaffAccount, 'staffPerms?', !!staffPerms, 'visibleNav:', visibleNav.map(v => v.to))
+  if (!hideNav) {
+    console.debug('[AppLayout] userLoaded:', userLoaded, 'userIsOwner:', userIsOwner, 'isStaffAccount:', isStaffAccount, 'staffPerms?', !!staffPerms, 'visibleNav:', visibleNav.map(v => v.to))
+  }
 
   return (
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">

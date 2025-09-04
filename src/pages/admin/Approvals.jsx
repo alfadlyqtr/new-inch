@@ -12,7 +12,8 @@ export default function AdminApprovals() {
     const { data, error } = await supabase
       .from("users_app")
       .select("*")
-      .or("is_approved.is.null,is_approved.eq.false")
+      .is("deleted_at", null)
+      .or('is_approved.is.null,is_approved.eq.false')
       .order("created_at", { ascending: false })
       .limit(50)
     if (error) {
@@ -52,7 +53,7 @@ export default function AdminApprovals() {
         {!loading && rows.length > 0 && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {rows.map((r) => (
-              <ApprovalCard key={r.id} row={r} onApproved={load} />
+              <ApprovalCard key={r.id} row={r} onChanged={load} />
             ))}
           </div>
         )}
@@ -61,21 +62,91 @@ export default function AdminApprovals() {
   )
 }
 
-function ApprovalCard({ row, onApproved }) {
+function ApprovalCard({ row, onChanged }) {
   const [busy, setBusy] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [errMsg, setErrMsg] = useState("")
   const name = row.full_name || row.owner_name || row.staff_name || "—"
   const created = row.created_at ? new Date(row.created_at).toLocaleString() : ""
   const email = row.email || "(no email)"
 
   async function approve() {
     setBusy(true)
-    const { error } = await supabase
-      .from("users_app")
-      .update({ is_approved: true })
-      .eq("auth_user_id", row.auth_user_id)
-    setBusy(false)
-    if (!error) onApproved?.()
+    // Prefer secure Edge Function to bypass RLS
+    try {
+      const { data: s } = await supabase.auth.getSession()
+      const token = s?.session?.access_token
+      const { error } = await supabase.functions.invoke('admin-update-user-flags', {
+        body: { id: row.id, patch: { is_approved: true } },
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (error) throw error
+      onChanged?.()
+    } catch (e) {
+      // Fallback to direct table update if function is unavailable
+      const { error } = await supabase
+        .from("users_app")
+        .update({ is_approved: true })
+        .eq("auth_user_id", row.auth_user_id)
+      if (!error) onChanged?.()
+    } finally {
+      setBusy(false)
+    }
     // You could surface error UI here if needed
+  }
+
+  async function reject() {
+    setBusy(true)
+    try {
+      const { data: s } = await supabase.auth.getSession()
+      const token = s?.session?.access_token
+      const { error } = await supabase.functions.invoke('admin-update-user-flags', {
+        body: { id: row.id, patch: { is_approved: false } },
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (error) throw error
+      onChanged?.()
+    } catch (e) {
+      const { error } = await supabase
+        .from("users_app")
+        .update({ is_approved: false })
+        .eq("auth_user_id", row.auth_user_id)
+      if (!error) onChanged?.()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteUser() {
+    if (deleteBusy) return
+    setDeleteBusy(true)
+    setErrMsg("")
+    try {
+      // Try RPC that handles both auth deletion and users_app soft-delete
+      let delErr = null
+      let res = await supabase.rpc('admin_delete_user', { users_app_id: row.id, auth_user_id: row.auth_user_id })
+      delErr = res.error
+      if (delErr) {
+        res = await supabase.rpc('admin_delete_user', { user_app_id: row.id, auth_user_id: row.auth_user_id })
+        delErr = res.error
+      }
+      if (delErr) {
+        // Fallback to Edge Function
+        const { data: s } = await supabase.auth.getSession()
+        const token = s?.session?.access_token
+        const ef = await supabase.functions.invoke('admin-delete-user', {
+          body: { auth_user_id: row.auth_user_id, users_app_id: row.id },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (ef.error) throw ef.error
+      }
+    } catch (err) {
+      setErrMsg(err?.message || String(err))
+      setDeleteBusy(false)
+      return
+    }
+    setDeleteBusy(false)
+    if (typeof onChanged === 'function') onChanged()
   }
 
   return (
@@ -100,8 +171,24 @@ function ApprovalCard({ row, onApproved }) {
         >
           {busy ? "Approving…" : "Approve"}
         </button>
-        {/* Placeholder for deny/notes in future */}
+        <button
+          disabled={busy}
+          onClick={reject}
+          className={`text-xs px-3 py-1 rounded-md bg-amber-700/70 hover:bg-amber-700 border border-white/10 ${busy ? "opacity-60" : ""}`}
+        >
+          {busy ? "Working…" : "Reject"}
+        </button>
+        <button
+          disabled={deleteBusy}
+          onClick={deleteUser}
+          className={`text-xs px-3 py-1 rounded-md bg-rose-700/70 hover:bg-rose-700 border border-rose-400/40 ${deleteBusy ? "opacity-60" : ""}`}
+        >
+          {deleteBusy ? 'Deleting…' : 'Delete'}
+        </button>
       </div>
+      {errMsg && (
+        <div className="mt-2 text-[11px] text-red-300 bg-red-900/30 border border-red-700/40 rounded p-2">{errMsg}</div>
+      )}
     </div>
   )
 }

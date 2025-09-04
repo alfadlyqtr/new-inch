@@ -234,6 +234,24 @@ function DocPreview({ doc }) {
       notes: staff?.notes || '',
       permissions: ensureCompletePermissions(staff?.permissions || {}),
     })
+    // Attempt to load authoritative permissions from staff_permissions table
+    ;(async () => {
+      try {
+        if (!staff?.id || !staff?.business_id) return
+        const { data, error } = await supabase
+          .from('staff_permissions')
+          .select('permissions')
+          .eq('business_id', staff.business_id)
+          .eq('staff_id', staff.id)
+          .maybeSingle()
+        if (error) return
+        if (data?.permissions) {
+          setForm((prev) => ({ ...prev, permissions: ensureCompletePermissions(data.permissions) }))
+        }
+      } catch (_) {
+        // non-fatal: keep legacy/staff.permissions if present
+      }
+    })()
   }, [staff?.id])
 
   const disabled = !editing || saving
@@ -266,7 +284,6 @@ function DocPreview({ doc }) {
           relationship: form.emergency_relationship || null,
         },
         notes: form.notes || null,
-        permissions: safePerms,
       }
       const { data, error, status } = await supabase
         .from('staff')
@@ -275,6 +292,14 @@ function DocPreview({ doc }) {
         .select('id')
       if (error) throw error
       if (!data || data.length === 0) throw new Error('Save blocked (0 rows affected). Check permissions/RLS.')
+      // Save permissions via secure RPC to staff_permissions
+      if (!staff?.business_id) throw new Error('Missing business context for permissions')
+      const { error: permErr } = await supabase.rpc('api_staff_set_permissions', {
+        p_business_id: staff.business_id,
+        p_staff_id: staff.id,
+        p_permissions: safePerms,
+      })
+      if (permErr) throw permErr
       setEditing(false)
       setNotice('Saved ✓')
       await onReload?.()

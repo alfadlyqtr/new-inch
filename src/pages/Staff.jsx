@@ -10,6 +10,7 @@ export default function Staff() {
   const [userRow, setUserRow] = useState(null)
   const [businessId, setBusinessId] = useState("")
   const [businessName, setBusinessName] = useState("")
+  const [userIsOwner, setUserIsOwner] = useState(false)
   const [members, setMembers] = useState([])
   const [invited, setInvited] = useState([])
   const [activeTab, setActiveTab] = useState("members") // members | codes | payroll
@@ -57,7 +58,7 @@ export default function Staff() {
         // who am I
         const { data: me, error: meErr } = await supabase
           .from("users_app")
-          .select("id, business_id")
+          .select("id, business_id, is_business_owner")
           .eq("auth_user_id", authUser.id)
           .limit(1)
           .maybeSingle()
@@ -65,6 +66,7 @@ export default function Staff() {
         if (cancelled) return
         setUserRow(me)
         setBusinessId(me.business_id)
+        setUserIsOwner(!!me.is_business_owner)
         // fetch business name
         try {
           const { data: biz, error: bizErr } = await supabase
@@ -201,21 +203,64 @@ export default function Staff() {
     setGenSubmitting(true)
     setGenNotice('')
     try {
-      const { error } = await supabase.rpc('api_business_code_create', {
-        p_code: code,
-        p_business_id: businessId,
-        p_created_by: userRow.id,
-        p_email: genEmail?.trim() || null,
-        p_expires_at: expiresAt,
-        p_max_uses: maxUses,
-      })
-      if (error) throw error
+      // Attempt 1: call without p_created_by (server derives from auth.uid())
+      let rpcError = null
+      {
+        const { error } = await supabase.rpc('api_business_code_create', {
+          p_code: code,
+          p_business_id: businessId,
+          p_email: genEmail?.trim() || null,
+          p_expires_at: expiresAt,
+          p_max_uses: maxUses,
+        })
+        rpcError = error
+      }
+
+      // If RPC failed due to function signature mismatch, retry with p_created_by
+      const isSignatureErr = (err) => {
+        const m = err?.message || err?.error_description || ''
+        return /No function match|PGRST202|function .* does not exist|could not find the function/i.test(m)
+      }
+
+      if (rpcError && isSignatureErr(rpcError)) {
+        const { error: retryErr } = await supabase.rpc('api_business_code_create', {
+          p_code: code,
+          p_business_id: businessId,
+          p_created_by: userRow.id,
+          p_email: genEmail?.trim() || null,
+          p_expires_at: expiresAt,
+          p_max_uses: maxUses,
+        })
+        rpcError = retryErr
+      }
+
+      if (rpcError && isSignatureErr(rpcError)) {
+        // Final fallback: direct insert (requires RLS policy for owners)
+        const insertPayload = {
+          code,
+          business_id: businessId,
+          email: genEmail?.trim() || null,
+          issued_at: new Date().toISOString(),
+          expires_at: expiresAt,
+          max_uses: maxUses,
+          used_count: 0,
+          is_active: true,
+        }
+        const { error: insErr } = await supabase
+          .from('business_codes')
+          .insert(insertPayload)
+        if (insErr) throw insErr
+      } else if (rpcError) {
+        throw rpcError
+      }
+
       setGenNotice(`Code generated: ${code}`)
       await loadCodes(businessId)
       setTimeout(() => { setGenNotice(''); setGenOpen(false) }, 900)
     } catch (e) {
       console.error('handleGenerateCode error', e)
-      setGenNotice(e.message || 'Failed to generate code')
+      const msg = e?.message || e?.error_description || JSON.stringify(e)
+      setGenNotice(`Failed to generate code: ${msg}`)
     } finally {
       setGenSubmitting(false)
     }
@@ -340,12 +385,14 @@ export default function Staff() {
     setSubmittingInvite(true)
     setInviteNotice("")
     try {
-      const { error } = await supabase.rpc('api_staff_invite_create', {
-        p_business_id: businessId,
-        p_name: inviteName.trim(),
-        p_email: inviteEmail.trim(),
-        p_role: inviteRole || 'staff',
-      })
+      const payload = {
+        business_id: businessId,
+        email: inviteEmail.trim(),
+        name: inviteName.trim(),
+        role: inviteRole || 'staff',
+        invitation_status: 'invited',
+      }
+      const { error } = await supabase.from('staff').insert(payload).select('id').single()
       if (error) throw error
       setInviteNotice("Invitation created ✓")
       // reset form and close
@@ -423,6 +470,9 @@ export default function Staff() {
                         <div className="mt-1 inline-flex items-center gap-2">
                           <span className="px-2 py-0.5 rounded bg-white/10 border border-white/10 text-[10px] uppercase tracking-wide">{m.is_business_owner ? 'owner' : (m.role || 'staff')}</span>
                         </div>
+                        {m.is_business_owner && (
+                          <div className="mt-1 text-[10px] text-amber-200">You are the boss!!</div>
+                        )}
                       </div>
                     </div>
                     <div className="text-[10px] text-slate-400">Joined {m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</div>
@@ -629,6 +679,9 @@ export default function Staff() {
                     <span className="px-2 py-0.5 rounded bg-white/10 border border-white/10 text-[10px] uppercase tracking-wide">staff account</span>
                   )}
                 </div>
+                {selected?.is_business_owner && (
+                  <div className="mt-2 text-[11px] text-amber-200">You are the boss running the show. Good luck!</div>
+                )}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
                   <div>
                     <div className="text-[11px] text-slate-400">Email</div>

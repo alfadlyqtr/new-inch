@@ -44,7 +44,7 @@ export default function Setup() {
         if (!authUser) { navigate("/auth", { replace: true }); return }
         const { data: row, error: uErr } = await supabase
           .from('users_app')
-          .select('id, is_approved, is_business_owner, business_id, owner_name, full_name, staff_name, email')
+          .select('id, is_approved, is_business_owner, business_id, owner_name, full_name, staff_name, email, setup_completed')
           .eq('auth_user_id', authUser.id)
           .order('updated_at', { ascending: false })
           .limit(1)
@@ -52,8 +52,14 @@ export default function Setup() {
         if (uErr) throw uErr
         if (cancelled) return
         setUserRow(row)
-        // If already linked to a business, go to dashboard
-        if (row?.business_id) { navigate('/dashboard', { replace: true }); return }
+        // Prefill owner name and email from existing data/auth
+        try {
+          const ownerName = row?.owner_name || row?.full_name || authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || ''
+          const email = row?.email || authUser?.email || ''
+          setForm((f) => ({ ...f, ownerName: f.ownerName || ownerName, email: f.email || email }))
+        } catch { /* noop */ }
+        // If already linked or setup completed, go straight to dashboard (one-time form)
+        if (row?.business_id || row?.setup_completed) { navigate('/dashboard', { replace: true }); return }
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load setup')
       } finally {
@@ -129,18 +135,18 @@ export default function Setup() {
       if (bErr) throw bErr
 
       // Link current users_app to this business and mark as owner when possible
-      const updates = { business_id: biz.id, is_business_owner: true, is_staff_account: false, setup_completed: true }
+      const updates = { business_id: biz.id, is_business_owner: true, is_staff_account: false, setup_completed: true, owner_name: form.ownerName || undefined, email: form.email || undefined }
       const { error: linkErr } = await supabase
         .from('users_app')
         .update(updates)
         .eq('auth_user_id', authUser.id)
       if (linkErr) throw linkErr
 
-      // Set redirecting state and delay navigation to prevent flickering
+      // Mark setup complete locally and perform a HARD redirect to mount fresh app state
+      try { window.sessionStorage.setItem('inch_setup_done', '1'); window.localStorage.setItem('inch_setup_done', '1') } catch {}
       setRedirecting(true)
-      setTimeout(() => {
-        navigate('/dashboard', { replace: true })
-      }, 500)
+      // Hard reload avoids any intermediate gating flicker
+      window.location.replace('/dashboard')
     } catch (e) {
       setError(e.message || 'Failed to create business')
     } finally {
@@ -212,11 +218,11 @@ export default function Setup() {
         .update({ used_count: (codeRow.used_count || 0) + 1 })
         .eq('id', codeRow.id)
 
-      // Set redirecting state and delay navigation to prevent flickering
+      // Mark setup complete locally and perform a HARD redirect to mount fresh app state
+      try { window.sessionStorage.setItem('inch_setup_done', '1'); window.localStorage.setItem('inch_setup_done', '1') } catch {}
       setRedirecting(true)
-      setTimeout(() => {
-        navigate('/dashboard', { replace: true })
-      }, 500)
+      // Hard reload avoids any intermediate gating flicker
+      window.location.replace('/dashboard')
     } catch (e) {
       console.warn('joinByCode error:', e)
       setError(e.message || 'Failed to join business')
@@ -225,7 +231,8 @@ export default function Setup() {
     }
   }
 
-  if (loading) {
+  // While loading or redirecting, render minimal shell to avoid visible flicker
+  if (loading || redirecting) {
     return (
       <div>
         <TopBar />

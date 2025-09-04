@@ -36,6 +36,7 @@ export default function AdminLayout() {
   const [authChecked, setAuthChecked] = useState(false)
   const [session, setSession] = useState(null)
   const [signingOut, setSigningOut] = useState(false)
+  // Admin checks removed per request: any authenticated user can access admin
 
   useEffect(() => {
     let isMounted = true
@@ -53,6 +54,8 @@ export default function AdminLayout() {
       subscription.unsubscribe()
     }
   }, [])
+
+  // No admin privilege check; session is sufficient
   
   if (!authChecked) {
     return (
@@ -65,6 +68,8 @@ export default function AdminLayout() {
   if (!session) {
     return <Navigate to="/mqtr" replace />
   }
+
+  // No admin privilege gating beyond authentication
 
   async function handleSignOut() {
     try {
