@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabaseClient.js"
+import { useCan, PermissionGate } from "../lib/permissions.jsx"
 
 export default function Dashboard() {
   // Live clock for date/time in the business banner
@@ -9,6 +10,8 @@ export default function Dashboard() {
   const [businessId, setBusinessId] = useState("—")
   const [businessName, setBusinessName] = useState("")
   const [ownerName, setOwnerName] = useState("")
+  const [staffId, setStaffId] = useState("")
+  const [employmentCode, setEmploymentCode] = useState("")
   const [logoUrl, setLogoUrl] = useState("")
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -50,6 +53,48 @@ export default function Dashboard() {
             // RLS may block; we already show ID from users_app
             console.debug("Dashboard: business fetch issue", bErr)
           }
+          // If this is a staff account, fetch their staff.id to show in header
+          if (!user.is_business_owner) {
+            try {
+              let srow = null
+              // 1) If users_app has staff_id, use it directly
+              if (user.staff_id) {
+                const res1 = await supabase
+                  .from('staff')
+                  .select('id, notes')
+                  .eq('id', user.staff_id)
+                  .maybeSingle()
+                srow = res1.data || null
+              }
+              // 2) Try via staff.user_id -> users_app.id
+              if (!srow) {
+                const res2 = await supabase
+                  .from('staff')
+                  .select('id, notes')
+                  .eq('business_id', user.business_id)
+                  .eq('user_id', user.id)
+                  .maybeSingle()
+                srow = res2.data || null
+              }
+              // 3) Fallback: match by email within same business
+              if (!srow && user.email) {
+                const res3 = await supabase
+                  .from('staff')
+                  .select('id, notes')
+                  .eq('business_id', user.business_id)
+                  .ilike('email', user.email)
+                  .maybeSingle()
+                srow = res3.data || null
+              }
+              if (!cancelled && srow?.id) {
+                setStaffId(srow.id)
+                try {
+                  const m = /StaffID\s*:\s*([^\n]+)/i.exec(srow.notes || '')
+                  if (m && m[1]) setEmploymentCode(m[1].trim())
+                } catch {}
+              }
+            } catch (_) {}
+          }
         }
       } catch (_e) {
         // optional: console.debug(_e)
@@ -77,12 +122,11 @@ export default function Dashboard() {
     { label: "Low Stock Items", value: 0, icon: "⚠️" },
   ]
 
-  const quick = [
-    { label: "New Order" },
-    { label: "Add Customer" },
-    { label: "Create Job Card" },
-    { label: "Record Expense" },
-  ]
+  const canCreateOrder = useCan('orders','create')
+  const canCreateCustomer = useCan('customers','create')
+  const canCreateJobCard = useCan('jobcards','create')
+  const canCreateExpense = useCan('expenses','create')
+  const canViewInventory = useCan('inventory','view')
 
   return (
     <div className="space-y-6">
@@ -104,7 +148,15 @@ export default function Dashboard() {
           <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
         </div>
         {/* Owner (kept at the far right) */}
-        <div className="ml-auto text-xs text-slate-300">{ownerName || "—"} <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span></div>
+        <div className="ml-auto text-xs text-slate-300 flex items-center gap-2">
+          <span>{ownerName || "—"}</span>
+          <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span>
+          {!userRow?.is_business_owner && employmentCode && (
+            <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono" title={`StaffID: ${employmentCode}`}>
+              StaffID: {employmentCode}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Stats */}
@@ -132,14 +184,18 @@ export default function Dashboard() {
             <div className="text-center">
               <div className="text-3xl mb-2">📦</div>
               <div>No orders yet</div>
-              <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">Create First Order</button>
+              <PermissionGate module="orders" action="create">
+                <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">Create First Order</button>
+              </PermissionGate>
             </div>
           </div>
         </div>
         <div className="glass rounded-2xl border border-white/10 p-6 min-h-[220px]">
           <div className="text-white/90 font-medium">Low Stock Alerts</div>
           <p className="text-sm text-slate-400 mt-1">All fabrics are well stocked</p>
-          <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">View Inventory</button>
+          {canViewInventory && (
+            <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">View Inventory</button>
+          )}
         </div>
       </div>
 
@@ -148,11 +204,18 @@ export default function Dashboard() {
         <div className="glass rounded-2xl border border-white/10 p-6 lg:col-span-2">
           <div className="text-white/90 font-medium">Quick Actions</div>
           <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {quick.map((q) => (
-              <button key={q.label} className="h-20 rounded-xl pill-active glow text-sm font-medium">
-                {q.label}
-              </button>
-            ))}
+            {canCreateOrder && (
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">New Order</button>
+            )}
+            {canCreateCustomer && (
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Add Customer</button>
+            )}
+            {canCreateJobCard && (
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Create Job Card</button>
+            )}
+            {canCreateExpense && (
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Record Expense</button>
+            )}
           </div>
         </div>
         <div className="glass rounded-2xl border border-white/10 p-6">

@@ -5,6 +5,7 @@ import { ensureCompletePermissions } from "../pages/staff/staff-permissions-defa
 import { useTranslation } from "react-i18next"
 import WelcomeAnimation from "../components/WelcomeAnimation.jsx"
 import 'driver.js/dist/driver.css'
+import { PermissionProvider } from "../lib/permissions.jsx"
 
 const navItems = [
   { to: "/dashboard", label: "dashboard", icon: "🏠" },
@@ -50,14 +51,16 @@ export default function AppLayout() {
   const [userRole, setUserRole] = useState("")
   const [avatarUrl, setAvatarUrl] = useState("")
   const [userIsOwner, setUserIsOwner] = useState(false)
-  const [userLoaded, setUserLoaded] = useState(false)
-  const [isStaffAccount, setIsStaffAccount] = useState(null) // null unknown, true staff, false non-staff
+  const [isStaffAccount, setIsStaffAccount] = useState(false)
+  const [staffPerms, setStaffPerms] = useState(null)
+  const [previewAs, setPreviewAs] = useState(null) // { business_id, staff_id? , staff_email? }
   const [staffId, setStaffId] = useState(null)
+  const [businessId, setBusinessId] = useState(null)
   const [userAppId, setUserAppId] = useState(null)
-  const [staffPerms, setStaffPerms] = useState(null) // normalized perms
   const { i18n, t } = useTranslation()
   const [lng, setLng] = useState(i18n.language || "en")
   const [approvedChecked, setApprovedChecked] = useState(false)
+  const [userLoaded, setUserLoaded] = useState(false)
   const [isApproved, setIsApproved] = useState(null) // null=unknown, true/false
   const [needsSetup, setNeedsSetup] = useState(false)
   const [missingBusiness, setMissingBusiness] = useState(false)
@@ -102,6 +105,47 @@ export default function AppLayout() {
     }
   }, [])
 
+  // Owner preview: if URL has ?business_id=...&staff_id=... or &staff_email=...
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "")
+    const pBiz = params.get('business_id')
+    const pStaff = params.get('staff_id')
+    const pEmail = params.get('staff_email')
+    const active = !!(pBiz && (pStaff || pEmail))
+    if (!active) { setPreviewAs(null); return }
+    setPreviewAs({ business_id: pBiz, staff_id: pStaff, staff_email: pEmail })
+    ;(async () => {
+      try {
+        // Resolve staff_id if only email provided
+        let staffId = pStaff
+        if (!staffId && pEmail) {
+          const { data: s, error: sErr } = await supabase
+            .from('staff')
+            .select('id')
+            .eq('business_id', pBiz)
+            .ilike('email', pEmail)
+            .maybeSingle()
+          if (!sErr && s?.id) staffId = s.id
+        }
+        if (!staffId) return
+        // Load that staff's permissions
+        const { data: sp, error: spErr } = await supabase
+          .from('staff_permissions')
+          .select('permissions')
+          .eq('business_id', pBiz)
+          .eq('staff_id', staffId)
+          .maybeSingle()
+        const perms = ensureCompletePermissions(sp?.permissions || {})
+        setStaffPerms(perms)
+        // Force the layout into staff mode during preview
+        setIsStaffAccount(true)
+        setUserIsOwner(false)
+        setBusinessId(pBiz)
+        setStaffId(staffId)
+      } catch { /* ignore */ }
+    })()
+  }, [location.search])
+
   // Stamp last login when a session becomes available
   useEffect(() => {
     ;(async () => {
@@ -115,23 +159,36 @@ export default function AppLayout() {
     })()
   }, [session])
 
-  // Load staff permissions when applicable (link via staff.user_id)
+  // Load staff permissions for the current logged-in user from staff_permissions (authoritative)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         if (!session?.user) return
+        // If preview mode is active, skip this effect (handled above)
+        if (previewAs) return
         if (userIsOwner) { setStaffPerms(null); return } // owners can see all
         if (!userAppId) { setStaffPerms(null); return }
-        const { data, error } = await supabase
+        // 1) Find the staff row for this users_app user
+        const { data: srow, error: sErr } = await supabase
           .from('staff')
-          .select('id, permissions')
+          .select('id, business_id')
           .eq('user_id', userAppId)
           .maybeSingle()
         if (cancelled) return
-        if (error) { setStaffPerms(null); return }
-        const perms = ensureCompletePermissions(data?.permissions || {})
-        if (data?.id) setStaffId(data.id)
+        if (sErr || !srow) { setStaffId(null); setStaffPerms(null); return }
+        setStaffId(srow.id)
+        setBusinessId(srow.business_id)
+        // 2) Load authoritative permissions from staff_permissions
+        const { data: permRow, error: pErr } = await supabase
+          .from('staff_permissions')
+          .select('permissions')
+          .eq('business_id', srow.business_id)
+          .eq('staff_id', srow.id)
+          .maybeSingle()
+        if (cancelled) return
+        if (pErr) { setStaffPerms(null); return }
+        const perms = ensureCompletePermissions(permRow?.permissions || {})
         setStaffPerms(perms)
       } catch {
         if (!cancelled) setStaffPerms(null)
@@ -187,7 +244,7 @@ export default function AppLayout() {
         if (!authUser || cancelled) return
         const { data: user, error } = await supabase
           .from("users_app")
-          .select("id, full_name, owner_name, staff_name, is_business_owner, is_staff_account")
+          .select("id, full_name, owner_name, staff_name, is_business_owner, is_staff_account, business_id")
           .eq("auth_user_id", authUser.id)
           .limit(1)
           .maybeSingle()
@@ -209,6 +266,7 @@ export default function AppLayout() {
         setUserRole(isOwner ? "Business Owner 👑" : "Staff")
         setUserIsOwner(isOwner)
         setUserAppId(user.id)
+        setBusinessId(user.business_id || null)
         setStaffId(null)
         // Fetch avatar + appearance + language from user_settings
         try {
@@ -527,15 +585,15 @@ export default function AppLayout() {
     if (to.startsWith('/dashboard') || to.startsWith('/settings')) return true
     const mod = routeToModule(to)
     // Allow Staff management only for Business Owners
-    if (mod === 'staff') return !!userIsOwner
+    if (mod === 'staff') return !!ownerForProvider
     // Owners can see everything else
-    if (userIsOwner) return true
+    if (ownerForProvider) return true
     if (!mod) return true
     return !!staffPerms?.[mod]?.view
   }
 
   // Owners see all items including Staff; others are permission-based with Staff hidden.
-  const visibleNav = userIsOwner
+  const visibleNav = ownerForProvider
     ? navItems
     : ((!userLoaded) || (isStaffAccount !== true))
       ? navItems.filter(n => n.to !== '/staff')
@@ -546,7 +604,10 @@ export default function AppLayout() {
     console.debug('[AppLayout] userLoaded:', userLoaded, 'userIsOwner:', userIsOwner, 'isStaffAccount:', isStaffAccount, 'staffPerms?', !!staffPerms, 'visibleNav:', visibleNav.map(v => v.to))
   }
 
+  const ownerForProvider = previewAs ? false : !!userIsOwner
+
   return (
+    <PermissionProvider owner={ownerForProvider} permissions={staffPerms || {}}>
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
       {/* Sidebar */}
       {!hideNav && (
@@ -655,5 +716,6 @@ export default function AppLayout() {
         </main>
       </div>
     </div>
+    </PermissionProvider>
   )
 }

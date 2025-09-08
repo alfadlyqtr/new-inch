@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { supabase } from "../../lib/supabaseClient"
 import { ORDERED_MODULES, ensureCompletePermissions } from "./staff-permissions-defaults"
+import { normalizeModuleKey } from "../../lib/permissions-config.js"
 
 export default function StaffDetails({
   user,
@@ -10,6 +12,7 @@ export default function StaffDetails({
   onReload,
   onClose,
 }) {
+  const navigate = useNavigate()
   const name = user?.owner_name || user?.full_name || user?.staff_name || staff?.name || user?.email || "—"
   const role = staff?.role || (user?.is_business_owner ? "owner" : (user?.role || "staff"))
   const kpi = {
@@ -236,23 +239,27 @@ function DocPreview({ doc }) {
     })
     // Attempt to load authoritative permissions from staff_permissions table
     ;(async () => {
-      try {
-        if (!staff?.id || !staff?.business_id) return
-        const { data, error } = await supabase
-          .from('staff_permissions')
-          .select('permissions')
-          .eq('business_id', staff.business_id)
-          .eq('staff_id', staff.id)
-          .maybeSingle()
-        if (error) return
-        if (data?.permissions) {
-          setForm((prev) => ({ ...prev, permissions: ensureCompletePermissions(data.permissions) }))
-        }
-      } catch (_) {
-        // non-fatal: keep legacy/staff.permissions if present
-      }
+      await reloadPermissions()
     })()
-  }, [staff?.id])
+  }, [staff?.id, staff?.business_id])
+
+  async function reloadPermissions() {
+    try {
+      if (!staff?.id || !staff?.business_id) return
+      const { data, error } = await supabase
+        .from('staff_permissions')
+        .select('permissions')
+        .eq('business_id', staff.business_id)
+        .eq('staff_id', staff.id)
+        .maybeSingle()
+      if (error) return
+      if (data?.permissions) {
+        setForm((prev) => ({ ...prev, permissions: ensureCompletePermissions(data.permissions) }))
+      }
+    } catch (_) {
+      // non-fatal: keep legacy/staff.permissions if present
+    }
+  }
 
   const disabled = !editing || saving
   const onInput = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -292,20 +299,35 @@ function DocPreview({ doc }) {
         .select('id')
       if (error) throw error
       if (!data || data.length === 0) throw new Error('Save blocked (0 rows affected). Check permissions/RLS.')
-      // Save permissions via secure RPC to staff_permissions
+      // Save permissions directly to staff_permissions (avoid RPC 404 noise)
       if (!staff?.business_id) throw new Error('Missing business context for permissions')
-      const { error: permErr } = await supabase.rpc('api_staff_set_permissions', {
-        p_business_id: staff.business_id,
-        p_staff_id: staff.id,
-        p_permissions: safePerms,
-      })
-      if (permErr) throw permErr
+      try {
+        const { data: sess } = await supabase.auth.getSession()
+        const uid = sess?.session?.user?.id || null
+        const upsertPayload = {
+          business_id: staff.business_id,
+          staff_id: staff.id,
+          permissions: safePerms,
+        }
+        // include redundant staff email for convenience
+        if (staff?.email) upsertPayload.staff_email = staff.email
+        if (uid) upsertPayload.updated_by = uid
+        upsertPayload.updated_at = new Date().toISOString()
+        const { error: upErr } = await supabase
+          .from('staff_permissions')
+          .upsert(upsertPayload, { onConflict: 'business_id,staff_id' })
+        if (upErr) throw upErr
+      } catch (fallbackErr) {
+        throw fallbackErr
+      }
+      // Re-fetch from DB to ensure UI reflects persisted server state
+      await reloadPermissions()
       setEditing(false)
       setNotice('Saved ✓')
       await onReload?.()
       setTimeout(()=>setNotice(''), 1200)
+      // No navigation here. With split dashboards, BO stays on BO dashboard; Staff loads own perms in Staff layout.
     } catch (e) {
-      console.error('save staff failed', e)
       setNotice(e.message || 'Failed to save')
     } finally {
       setSaving(false)
@@ -431,10 +453,13 @@ function DocPreview({ doc }) {
               {editing ? (
                 <div className="col-span-2">
                   <PermissionGrid permissions={form.permissions} onToggle={(mod, action, checked)=>{
-                    setForm(prev=>({
-                      ...prev,
-                      permissions: { ...prev.permissions, [mod]: { ...(prev.permissions?.[mod]||{}), [action]: checked } }
-                    }))
+                    const canon = normalizeModuleKey(mod)
+                    setForm(prev=>{
+                      const next = { ...(prev.permissions || {}) }
+                      next[mod] = { ...(next[mod] || {}), [action]: checked }
+                      next[canon] = { ...(next[canon] || {}), [action]: checked }
+                      return { ...prev, permissions: next }
+                    })
                   }} />
                 </div>
               ) : (

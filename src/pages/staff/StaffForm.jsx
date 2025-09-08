@@ -42,7 +42,7 @@ const DEFAULT_STAFF = Object.freeze({
   documents: EMPTY_DOCS,
 })
 
-export default function StaffForm({ businessId, onClose, onCreated, prefill = {} }) {
+export default function StaffForm({ businessId, onClose, onCreated, prefill = {}, forcedStaffId = "" }) {
   const [tab, setTab] = useState("documents")
   const [formData, setFormData] = useState(() => ({
     ...DEFAULT_STAFF,
@@ -206,6 +206,11 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
   async function handleSubmit(e){
     e.preventDefault()
     if (!businessId) { setNotice("Missing business context"); return }
+    if (!forcedStaffId || String(forcedStaffId).trim().length === 0) {
+      setNotice("Staff ID is required by the Business Owner")
+      setTimeout(()=>setNotice(""), 1600)
+      return
+    }
     const email = (formData.email || '').trim()
     if (!formData.name || !formData.role || !email) {
       setNotice(!email ? "Email is required" : "Name and Role are required")
@@ -222,15 +227,55 @@ export default function StaffForm({ businessId, onClose, onCreated, prefill = {}
         name: formData.name,
         role: formData.role || 'staff',
         invitation_status: 'invited',
+        // Temporarily record owner-assigned Staff ID inside notes until schema column exists
+        notes: [
+          (formData.notes || '').trim(),
+          `StaffID:${String(forcedStaffId).trim()}`
+        ].filter(Boolean).join('\n')
       }
-      const { error } = await supabase.from('staff').insert(payload).select('id').single()
+      const { data: createdRow, error } = await supabase.from('staff').insert(payload).select('id, name, email').single()
       if (error) throw error
 
-      setNotice('Invitation created ✔')
-      setTimeout(()=>setNotice(''), 1000)
+      // Try to generate a one-time business code for this staff (best-effort)
+      let codeRes = null
+      try {
+        const part = (n) => Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g,'').slice(2, 2 + n)
+        const code = `INCH-${part(4)}-${part(4)}`
+        const hours = 12
+        const expiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString()
+        // First try without p_created_by, then retry with it if needed
+        let rpcErr = null
+        {
+          const { data, error: e1 } = await supabase.rpc('api_business_code_create', {
+            p_code: code,
+            p_business_id: businessId,
+            p_email: email,
+            p_expires_at: expiresAt,
+            p_max_uses: 1,
+          })
+          codeRes = data; rpcErr = e1
+        }
+        if (rpcErr && (/No function match|PGRST202|does not exist/i.test(rpcErr.message||rpcErr.error_description||''))) {
+          const { data, error: e2 } = await supabase.rpc('api_business_code_create', {
+            p_code: code,
+            p_business_id: businessId,
+            p_created_by: null, // function will resolve from auth.uid()
+            p_email: email,
+            p_expires_at: expiresAt,
+            p_max_uses: 1,
+          })
+          codeRes = data
+        }
+      } catch (_e) {
+        // non-fatal; continue to success screen without code
+      }
+
+      setSuccessData({
+        staffMember: { id: createdRow.id, name: formData.name, email },
+        businessCode: codeRes || null,
+      })
       if (onCreated) onCreated()
-      // Close and rely on parent list refresh; optional success view skipped
-      if (typeof onClose === 'function') onClose()
+      // Do not auto-close; show success screen
     } catch (err) {
       console.error('staff invite create error', err)
       const msg = err?.message || err?.error_description || 'Failed to save. Please try again.'

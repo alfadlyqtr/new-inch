@@ -1,4 +1,8 @@
+import { useCan, Forbidden } from "../lib/permissions.jsx"
+
 export default function Reports() {
+  const canView = useCan('reports','view')
+  if (!canView) return <Forbidden module="reports" />
   return (
     <div className="space-y-6">
       <div className="glass rounded-2xl border border-white/10 p-6">

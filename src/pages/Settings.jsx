@@ -1,6 +1,8 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useRef, useState, useContext } from "react"
 import { supabase } from "../lib/supabaseClient.js"
 import { runTourOnce, tourKey } from "../lib/tour.js"
+import { useCan, Forbidden } from "../lib/permissions.jsx"
+import { useAppearance } from "../contexts/AppearanceContext"
 
 // Simple inline icons
 const IconBriefcase = (props) => (
@@ -23,6 +25,7 @@ const IconUser = (props) => (
 )
 
 export default function Settings() {
+  const canViewSettingsPerm = useCan('settings','view')
   // Backend-wired state
   const [loading, setLoading] = useState(true)
   const [userRow, setUserRow] = useState(null) // from public.users_app
@@ -62,7 +65,11 @@ export default function Settings() {
   const [emailNotif, setEmailNotif] = useState(false)
   const [pushNotif, setPushNotif] = useState(false)
 
-  const tabs = [
+  const isOwner = !!userRow?.is_business_owner
+  const isStaffRoute = typeof window !== 'undefined' && window.location && window.location.pathname.startsWith('/staff/')
+  const canViewSettings = isStaffRoute ? true : (isOwner ? canViewSettingsPerm : true)
+  if (!canViewSettings) return <Forbidden module="settings" />
+  const TABS_OWNER = [
     { id: "business", label: "Business", Icon: IconBriefcase },
     { id: "user", label: "User Settings", Icon: IconUser },
     { id: "invoice", label: "Invoice", Icon: IconReceipt },
@@ -70,16 +77,35 @@ export default function Settings() {
     { id: "security", label: "Security", Icon: IconShield },
     { id: "appearance", label: "Appearance", Icon: IconSparkle },
   ]
-  const [active, setActive] = useState("business")
-  const [theme, setTheme] = useState("purple")
-  const [custom, setCustom] = useState({ primary: "#7C3AED", accent: "#D946EF" })
-  // Extras: angle & glow
-  const [angle, setAngle] = useState(90)
-  const [glowMode, setGlowMode] = useState("match") // 'match' | 'custom'
-  const [glowColor, setGlowColor] = useState("#7C3AED")
-  const [glowDepth, setGlowDepth] = useState(60) // 0..100
-  const [savingAppearance, setSavingAppearance] = useState(false)
+  const TABS_STAFF = [
+    { id: "user", label: "User Settings", Icon: IconUser },
+    { id: "security", label: "Security", Icon: IconShield },
+    { id: "appearance", label: "Appearance", Icon: IconSparkle },
+  ]
+  const tabs = isOwner ? TABS_OWNER : TABS_STAFF
+  const [active, setActive] = useState(isOwner ? "business" : "user")
+  useEffect(() => {
+    // Reset default tab when role info becomes available
+    setActive(isOwner ? "business" : "user")
+  }, [isOwner])
+
+  const { appearance, updateAppearance } = useAppearance()
+  // Appearance tab local state and helpers
   const [appearanceNotice, setAppearanceNotice] = useState("")
+  const [savingAppearance, setSavingAppearance] = useState(false)
+  // Persist minimal appearance to localStorage (scoped per user via getLsKey)
+  function setLocalAppearance(a) {
+    try {
+      const themeKey = a?.theme === 'custom' ? 'custom' : (a?.theme || 'purple')
+      localStorage.setItem(getLsKey('theme'), themeKey)
+      if (themeKey === 'custom') {
+        const obj = { primary: a?.customColors?.primary || '#7C3AED', accent: a?.customColors?.secondary || '#D946EF' }
+        localStorage.setItem(getLsKey('themeCustom'), JSON.stringify(obj))
+      } else {
+        localStorage.removeItem(getLsKey('themeCustom'))
+      }
+    } catch {/* ignore */}
+  }
 
   // Local storage key helper to ensure per-user scoping (avoid global bleed between users)
   const getLsKey = (k) => (userRow?.id ? `u:${userRow.id}:${k}` : k)
@@ -209,15 +235,16 @@ export default function Settings() {
             const cust = appr.custom || {}
             const ang = Number.isFinite(appr.angle) ? appr.angle : 90
             const glow = appr.glow || {}
-            setTheme(t === "custom" ? "custom" : t)
-            const nextCustom = { primary: cust.primary || "#7C3AED", accent: cust.accent || "#D946EF" }
-            setCustom(nextCustom)
-            applyTheme(t, nextCustom)
-            setAngle(ang); applyAngle(ang)
-            const gm = glow.mode === "custom" ? "custom" : "match"
-            const gc = typeof glow.color === "string" ? glow.color : "#7C3AED"
-            const gd = Number.isFinite(glow.depth) ? glow.depth : 60
-            setGlowMode(gm); setGlowColor(gc); setGlowDepth(gd); applyGlow(gm, gc, gd)
+            updateAppearance({
+              theme: t === "custom" ? "custom" : t,
+              customColors: { primary: cust.primary || "#7C3AED", secondary: cust.accent || "#D946EF" },
+              angle: ang,
+              glow: {
+                mode: glow.mode === "custom" ? "custom" : "match",
+                color: glow.mode === "custom" ? glow.color : null,
+                depth: Number.isFinite(glow.depth) ? glow.depth : 60,
+              },
+            })
           }
           // Hydrate user profile preferences
           const profile = settings.user_profile || {}
@@ -411,30 +438,35 @@ export default function Settings() {
   }
 
   async function saveAppearance() {
-    if (!userRow) return
-    setSavingAppearance(true)
-    setAppearanceNotice("")
-    try {
-      const payload = {
-        theme,
-        custom: { primary: custom.primary, accent: custom.accent },
-        angle: Number(angle) || 90,
-        glow: {
-          mode: glowMode,
-          color: glowMode === "custom" ? glowColor : null,
-          depth: Number(glowDepth) || 60,
-        },
+    if (!userRow?.id) return
+    const saveAppearance = async () => {
+      setSavingAppearance(true)
+      try {
+        const { error } = await supabase
+          .from('user_settings')
+          .upsert(
+            { 
+              user_id: userRow.id,
+              appearance_settings: {
+                theme: appearance.theme,
+                custom: { primary: appearance.customColors.primary, accent: appearance.customColors.secondary },
+                angle: appearance.angle,
+                glow: appearance.glow,
+              }
+            },
+            { onConflict: 'user_id' }
+          )
+        if (error) throw error
+        setAppearanceNotice('Saved to your account')
+      } catch (e) {
+        console.error('Error saving appearance:', e)
+        setAppearanceNotice('Failed to save: ' + (e.message || 'Unknown error'))
+      } finally {
+        setSavingAppearance(false)
+        setTimeout(() => setAppearanceNotice(''), 3000)
       }
-      const { error } = await supabase.rpc('api_user_settings_set_appearance', { p_appearance: payload })
-      if (error) throw error
-      setAppearanceNotice("Saved appearance ✓")
-    } catch (e) {
-      setAppearanceNotice("Failed to save appearance. Please try again.")
-      console.error("saveAppearance error", e)
-    } finally {
-      setSavingAppearance(false)
-      setTimeout(() => setAppearanceNotice(""), 2500)
     }
+    saveAppearance()
   }
 
   // Apply and persist theme (scoped per-user via localStorage key prefix)
@@ -445,7 +477,7 @@ export default function Settings() {
       if (opts?.primary) root.style.setProperty("--color-brand-primary", opts.primary)
       if (opts?.accent) root.style.setProperty("--color-brand-fuchsia", opts.accent)
       localStorage.setItem(getLsKey("theme"), "custom")
-      localStorage.setItem(getLsKey("themeCustom"), JSON.stringify({ primary: opts?.primary || custom.primary, accent: opts?.accent || custom.accent }))
+      localStorage.setItem(getLsKey("themeCustom"), JSON.stringify({ primary: opts?.primary || appearance.customColors.primary, accent: opts?.accent || appearance.customColors.secondary }))
       return
     }
     // preset: ensure inline brand colors are cleared so data-theme wins,
@@ -463,58 +495,45 @@ export default function Settings() {
       const savedCustom = JSON.parse(localStorage.getItem(getLsKey("themeCustom")) || "{}")
       const fallback = { primary: "#7C3AED", accent: "#D946EF" }
       const next = { ...fallback, ...savedCustom }
-      setTheme("custom")
-      setCustom(next)
+      updateAppearance({ theme: "custom", customColors: next })
       applyTheme("custom", next)
       return
     }
-    setTheme(saved)
+    updateAppearance({ theme: saved })
     applyTheme(saved)
   }, [userRow])
 
-  // Apply angle & glow
-  const applyAngle = (deg) => {
-    const root = document.documentElement
-    root.style.setProperty("--brand-angle", `${deg}deg`)
-    localStorage.setItem(getLsKey("brandAngle"), String(deg))
-  }
-  const applyGlow = (mode, color, depth) => {
-    const root = document.documentElement
-    const d = Math.max(0, Math.min(100, depth ?? glowDepth))
-    // higher baselines so the effect is visible even at low depths
-    const a1 = 55 + d * 0.4
-    const a2 = 45 + d * 0.4
-    const a3 = 30 + d * 0.35
-    const soft = 18 + d * 0.18
-    const outer = 30 + d * 0.22
-    root.style.setProperty("--glow-a1", `${a1}%`)
-    root.style.setProperty("--glow-a2", `${a2}%`)
-    root.style.setProperty("--glow-a3", `${a3}%`)
-    root.style.setProperty("--glow-soft-blur", `${soft}px`)
-    root.style.setProperty("--glow-outer-blur", `${outer}px`)
-    if (mode === "custom") {
-      root.style.setProperty("--glow-color", color || glowColor)
-    } else {
-      root.style.setProperty("--glow-color", "var(--color-brand-primary)")
+  // Handle theme changes
+  const handleThemeChange = (themeId, customColors) => {
+    const newAppearance = {
+      ...appearance,
+      theme: themeId,
+      customColors: customColors || appearance.customColors
     }
-    localStorage.setItem(getLsKey("glow"), JSON.stringify({ mode, color: color || glowColor, depth: d }))
+    updateAppearance(newAppearance)
   }
-  useEffect(() => {
-    if (!userRow?.id) return
-    // load angle
-    const savedAngle = parseInt(localStorage.getItem(getLsKey("brandAngle")) || "90", 10)
-    setAngle(Number.isFinite(savedAngle) ? savedAngle : 90)
-    applyAngle(Number.isFinite(savedAngle) ? savedAngle : 90)
-    // load glow
-    const savedGlow = JSON.parse(localStorage.getItem(getLsKey("glow")) || "{}")
-    const m = savedGlow.mode === "custom" ? "custom" : "match"
-    const c = typeof savedGlow.color === "string" ? savedGlow.color : "#7C3AED"
-    const d = Number.isFinite(savedGlow.depth) ? savedGlow.depth : 60
-    setGlowMode(m)
-    setGlowColor(c)
-    setGlowDepth(d)
-    applyGlow(m, c, d)
-  }, [userRow])
+
+  // Handle angle change
+  const handleAngleChange = (newAngle) => {
+    const newAppearance = {
+      ...appearance,
+      angle: newAngle
+    }
+    updateAppearance(newAppearance)
+  }
+
+  // Handle glow change
+  const handleGlowChange = (mode, color, depth) => {
+    const newAppearance = {
+      ...appearance,
+      glow: {
+        mode,
+        color: color || appearance.glow?.color || "#7C3AED",
+        depth: depth !== undefined ? depth : appearance.glow?.depth || 60
+      }
+    }
+    updateAppearance(newAppearance)
+  }
 
   return (
     <div className="space-y-4">
@@ -539,8 +558,8 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Business Information */}
-      {active === "business" && (
+      {/* Business Information (owners only) */}
+      {isOwner && active === "business" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="business">
         <h2 className="text-lg font-semibold text-white/90">Business Information</h2>
         <p className="text-sm text-slate-400 mt-1">Update your business details, contact information, and logo.</p>
@@ -623,7 +642,7 @@ export default function Settings() {
       </section>
       )}
 
-      {/* User Settings */}
+      {/* User Settings (all users) */}
       {active === "user" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="user">
         <h2 className="text-lg font-semibold text-white/90">User Settings</h2>
@@ -692,8 +711,8 @@ export default function Settings() {
       </section>
       )}
 
-      {/* Invoice Settings */}
-      {active === "invoice" && (
+      {/* Invoice Settings (owners only) */}
+      {isOwner && active === "invoice" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="invoice">
         <h2 className="text-lg font-semibold text-white/90">Invoice Settings</h2>
         <p className="text-sm text-slate-400 mt-1">Configure your invoice templates and default settings.</p>
@@ -733,8 +752,8 @@ export default function Settings() {
       </section>
       )}
 
-      {/* Notification Preferences */}
-      {active === "notifications" && (
+      {/* Notification Preferences (owners only) */}
+      {isOwner && active === "notifications" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="notifications">
         <h2 className="text-lg font-semibold text-white/90">Notification Preferences</h2>
         <p className="text-sm text-slate-400 mt-1">Choose how you want to receive notifications.</p>
@@ -810,9 +829,9 @@ export default function Settings() {
           ].map((p) => (
             <button
               key={p.id}
-              onClick={() => { setTheme(p.id); applyTheme(p.id); }}
-              aria-pressed={theme === p.id}
-              className={`rounded-xl p-3 border transition text-left ${theme === p.id ? "pill-active glow border-transparent" : "border-white/10 hover:bg-white/5"}`}
+              onClick={() => handleThemeChange(p.id)}
+              aria-pressed={appearance.theme === p.id}
+              className={`rounded-xl p-3 border transition text-left ${appearance.theme === p.id ? "pill-active glow border-transparent" : "border-white/10 hover:bg-white/5"}`}
             >
               <div className="flex items-center gap-2">
                 <span className="inline-block h-6 w-6 rounded-full" style={{ background: p.primary }} />
@@ -832,12 +851,12 @@ export default function Settings() {
               type="range"
               min="0"
               max="360"
-              value={angle}
-              onChange={(e)=>{ const v=Number(e.target.value); setAngle(v); applyAngle(v); }}
+              value={appearance.angle}
+              onChange={(e) => handleAngleChange(Number(e.target.value))}
               className="w-60"
             />
-            <span className="text-xs text-slate-300 w-10 tabular-nums">{angle}°</span>
-            <div className="flex-1 min-w-[120px] h-8 rounded-md" style={{ background: `linear-gradient(${angle}deg, ${custom.primary}, ${custom.accent})` }} />
+            <span className="text-xs text-slate-300 w-10 tabular-nums">{appearance.angle}°</span>
+            <div className="flex-1 min-w-[120px] h-8 rounded-md" style={{ background: `linear-gradient(${appearance.angle}deg, ${appearance.customColors.primary}, ${appearance.customColors.secondary})` }} />
           </div>
         </div>
 
@@ -848,22 +867,42 @@ export default function Settings() {
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input type="radio" checked={glowMode === "match"} onChange={()=>{ setGlowMode("match"); applyGlow("match", glowColor, glowDepth); }} />
+                <input 
+                  type="radio" 
+                  checked={appearance.glow?.mode === "match"} 
+                  onChange={() => handleGlowChange("match", null, appearance.glow?.depth)} 
+                />
                 Match theme
               </label>
               <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input type="radio" checked={glowMode === "custom"} onChange={()=>{ setGlowMode("custom"); applyGlow("custom", glowColor, glowDepth); }} />
+                <input 
+                  type="radio" 
+                  checked={appearance.glow?.mode === "custom"} 
+                  onChange={() => handleGlowChange("custom", appearance.glow?.color, appearance.glow?.depth)} 
+                />
                 Custom
               </label>
-              {glowMode === "custom" && (
-                <input type="color" value={glowColor} onChange={(e)=>{ setGlowColor(e.target.value); applyGlow("custom", e.target.value, glowDepth); }} className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" />
+              {appearance.glow?.mode === "custom" && (
+                <input 
+                  type="color" 
+                  value={appearance.glow?.color || "#7C3AED"} 
+                  onChange={(e) => handleGlowChange("custom", e.target.value, appearance.glow?.depth)} 
+                  className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" 
+                />
               )}
             </div>
             <div className="flex items-center gap-3">
               <span className="text-xs text-slate-300">Depth</span>
-              <input type="range" min="0" max="100" value={glowDepth} onChange={(e)=>{ const v=Number(e.target.value); setGlowDepth(v); applyGlow(glowMode, glowColor, v); }} className="flex-1" />
-              <span className="text-xs text-slate-300 w-10 tabular-nums">{glowDepth}</span>
-              <div className="h-8 w-20 rounded-md glow" style={{ background: `linear-gradient(${angle}deg, var(--color-brand-primary), var(--color-brand-fuchsia))` }} />
+              <input 
+                type="range" 
+                min="0" 
+                max="100" 
+                value={appearance.glow?.depth || 60} 
+                onChange={(e) => handleGlowChange(appearance.glow?.mode || "match", appearance.glow?.color, Number(e.target.value))} 
+                className="flex-1" 
+              />
+              <span className="text-xs text-slate-300 w-10 tabular-nums">{appearance.glow?.depth || 60}</span>
+              <div className="h-8 w-20 rounded-md glow" style={{ background: `linear-gradient(${appearance.angle}deg, var(--color-brand-primary), var(--color-brand-fuchsia))` }} />
             </div>
           </div>
         </div>
@@ -874,12 +913,22 @@ export default function Settings() {
           <p className="text-xs text-slate-400 mt-1">Pick two colors to build your own gradient.</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs text-slate-300">From
-              <input type="color" value={custom.primary} onChange={(e)=>{ const v=e.target.value; const next={...custom, primary:v}; setCustom(next); setTheme("custom"); applyTheme("custom", next); }} className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" />
+              <input 
+                type="color" 
+                value={appearance.customColors.primary} 
+                onChange={(e) => handleThemeChange("custom", { primary: e.target.value, secondary: appearance.customColors.secondary })} 
+                className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" 
+              />
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-300">To
-              <input type="color" value={custom.accent} onChange={(e)=>{ const v=e.target.value; const next={...custom, accent:v}; setCustom(next); setTheme("custom"); applyTheme("custom", next); }} className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" />
+              <input 
+                type="color" 
+                value={appearance.customColors.secondary} 
+                onChange={(e) => handleThemeChange("custom", { primary: appearance.customColors.primary, secondary: e.target.value })} 
+                className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" 
+              />
             </label>
-            <div className="flex-1 min-w-[160px] h-8 rounded-md" style={{ background: `linear-gradient(90deg, ${custom.primary}, ${custom.accent})` }} />
+            <div className="flex-1 min-w-[160px] h-8 rounded-md" style={{ background: `linear-gradient(90deg, ${appearance.customColors.primary}, ${appearance.customColors.secondary})` }} />
           </div>
         </div>
 
@@ -889,10 +938,23 @@ export default function Settings() {
           <p className="text-xs text-slate-400 mt-1">Use a single color for both gradient ends (pills and glows will match).</p>
           <div className="mt-3 flex flex-wrap gap-3">
             {["#7C3AED","#2563EB","#4F46E5","#06B6D4","#10B981","#F59E0B","#E11D48"].map(c => (
-              <button key={c} onClick={()=>{ const next={ primary:c, accent:c }; setCustom(next); setTheme("custom"); applyTheme("custom", next); }} className="h-8 w-8 rounded-full border border-white/10" style={{ background:c }} aria-label={`Use ${c}`} />
+              <button 
+                key={c} 
+                onClick={() => handleThemeChange("custom", { primary: c, secondary: c })} 
+                className="h-8 w-8 rounded-full border border-white/10" 
+                style={{ background: c }} 
+                aria-label={`Use ${c}`} 
+              />
             ))}
             <label className="flex items-center gap-2 text-xs text-slate-300 ml-1">Custom
-              <input type="color" onChange={(e)=>{ const c=e.target.value; const next={ primary:c, accent:c }; setCustom(next); setTheme("custom"); applyTheme("custom", next); }} className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" />
+              <input 
+                type="color" 
+                onChange={(e) => {
+                  const c = e.target.value
+                  handleThemeChange("custom", { primary: c, secondary: c })
+                }} 
+                className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" 
+              />
             </label>
           </div>
         </div>
@@ -908,7 +970,16 @@ export default function Settings() {
             <button onClick={saveAppearance} disabled={loading || savingAppearance} aria-busy={savingAppearance} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingAppearance ? "Saving…" : "Save Appearance"}</button>
             <button
               className="px-3 py-1.5 rounded-md border border-white/10 hover:bg-white/10"
-              onClick={() => { setTheme("purple"); setCustom({ primary: "#7C3AED", accent: "#D946EF" }); applyTheme("purple"); setAngle(90); applyAngle(90); setGlowMode("match"); setGlowColor("#7C3AED"); setGlowDepth(60); applyGlow("match", "#7C3AED", 60); }}
+              onClick={() => {
+                const defaultAppearance = {
+                  theme: "purple",
+                  customColors: { primary: "#7C3AED", secondary: "#D946EF" },
+                  angle: 90,
+                  glow: { mode: "match", color: "#7C3AED", depth: 60 }
+                }
+                setLocalAppearance(defaultAppearance)
+                updateAppearance(defaultAppearance)
+              }}
             >Reset to default</button>
           </div>
         </div>

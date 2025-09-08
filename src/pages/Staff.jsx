@@ -15,6 +15,7 @@ export default function Staff() {
   const [invited, setInvited] = useState([])
   const [activeTab, setActiveTab] = useState("members") // members | codes | payroll
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteStaffId, setInviteStaffId] = useState("")
   const [inviteOutcome, setInviteOutcome] = useState(null) // { id, code, name }
   const [viewOpen, setViewOpen] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -234,23 +235,7 @@ export default function Staff() {
         rpcError = retryErr
       }
 
-      if (rpcError && isSignatureErr(rpcError)) {
-        // Final fallback: direct insert (requires RLS policy for owners)
-        const insertPayload = {
-          code,
-          business_id: businessId,
-          email: genEmail?.trim() || null,
-          issued_at: new Date().toISOString(),
-          expires_at: expiresAt,
-          max_uses: maxUses,
-          used_count: 0,
-          is_active: true,
-        }
-        const { error: insErr } = await supabase
-          .from('business_codes')
-          .insert(insertPayload)
-        if (insErr) throw insErr
-      } else if (rpcError) {
+      if (rpcError) {
         throw rpcError
       }
 
@@ -259,7 +244,7 @@ export default function Staff() {
       setTimeout(() => { setGenNotice(''); setGenOpen(false) }, 900)
     } catch (e) {
       console.error('handleGenerateCode error', e)
-      const msg = e?.message || e?.error_description || JSON.stringify(e)
+      const msg = e?.message || e?.error_description || (typeof e === 'object' ? JSON.stringify(e) : String(e))
       setGenNotice(`Failed to generate code: ${msg}`)
     } finally {
       setGenSubmitting(false)
@@ -607,9 +592,22 @@ export default function Staff() {
               </div>
               <button onClick={()=>setInviteOpen(false)} className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs">Close</button>
             </div>
+            <div className="mt-3">
+              <div className="text-xs text-slate-400 mb-1">Employment ID (required, set by Business Owner)</div>
+              <input
+                value={inviteStaffId}
+                onChange={e=>setInviteStaffId(e.target.value)}
+                placeholder="e.g., INCH-EMP-001"
+                className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm font-mono"
+                aria-label="Employment ID"
+                required
+              />
+              <div className="text-[10px] text-slate-400 mt-1">This identifier appears on staff records and can be used to search or link systems.</div>
+            </div>
             <div className="mt-4 h-[560px] overflow-y-auto pr-1">
               <StaffForm
                 businessId={businessId}
+                forcedStaffId={inviteStaffId}
                 onClose={()=>{ setInviteOpen(false) }}
                 onCreated={async()=>{ await loadMembers(businessId); await loadInvited(businessId); setInviteOpen(false); if (selected) { await loadSelectedStaffProfile(selected, businessId) } }}
               />

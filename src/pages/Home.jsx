@@ -43,7 +43,7 @@ export default function Home() {
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-6xl px-4 py-20 md:py-28">
           <div className="mx-auto max-w-3xl text-center">
-            <div className="mx-auto mb-4 w-24 h-24 rounded-full border-2 border-white/20 bg-white/5 flex items-center justify-center transform hover:rotate-6 hover:scale-105 transition-all duration-500"
+            <div className="mx-auto mb-6 w-48 h-48 rounded-full border-2 border-white/20 bg-white/5 flex items-center justify-center transform hover:rotate-6 hover:scale-105 transition-all duration-500"
               style={{
                 transformStyle: 'preserve-3d',
                 boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.25)',
@@ -54,7 +54,7 @@ export default function Home() {
               <img 
                 src="/logo.jpg" 
                 alt="INCH Logo" 
-                className="h-16 w-16 rounded-full object-cover"
+                className="h-32 w-32 rounded-full object-cover"
                 style={{
                   transform: 'translateZ(20px)'
                 }}

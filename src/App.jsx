@@ -1,9 +1,12 @@
+import React from "react"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
-import AppLayout from "./layouts/AppLayout.jsx"
+import BoLayout from "./layouts/BoLayout.jsx"
+import StaffLayout from "./layouts/StaffLayout.jsx"
 import AdminLayout from "./layouts/AdminLayout.jsx"
 import Dashboard from "./pages/Dashboard.jsx"
 import Auth from "./pages/Auth.jsx"
-import Setup from "./pages/Setup.jsx"
+import BoSetup from "./pages/BoSetup.jsx"
+import StaffSetup from "./pages/StaffSetup.jsx"
 import AdminDash from "./pages/AdminDash.jsx"
 import Customers from "./pages/Customers.jsx"
 import Orders from "./pages/Orders.jsx"
@@ -29,8 +32,8 @@ import AdminSupport from "./pages/admin/Support.jsx"
 import AdminObservability from "./pages/admin/Observability.jsx"
 import PendingApproval from "./pages/PendingApproval.jsx"
 import Signup from "./pages/Signup.jsx"
-
- 
+import { supabase } from "./lib/supabaseClient.js"
+import { AppearanceProvider } from "./contexts/AppearanceContext"
 
 function NotFound() {
   return (
@@ -41,33 +44,54 @@ function NotFound() {
   )
 }
 
+// Traffic cop removed per request: keep simple, no role-based guards here.
+
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Public site */}
+    <AppearanceProvider>
+      <BrowserRouter>
+        <Routes>
+        {/* Public home at "/" */}
         <Route path="/" element={<Home />} />
+        {/* No traffic cop; /app not used */}
+        {/* Back-compat: /dashboard should open BO dashboard */}
+        <Route path="/dashboard" element={<Navigate to="/bo/dashboard" replace />} />
         {/* Admin auth (standalone, no layout) */}
         <Route path="/mqtr" element={<AdminAuth />} />
         {/* User auth (standalone, no layout) */}
         <Route path="/auth" element={<Auth />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/pending-approval" element={<PendingApproval />} />
-        <Route element={<AppLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/setup" element={<Setup />} />
-          <Route path="/admindash" element={<AdminDash />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/job-cards" element={<JobCards />} />
-          <Route path="/invoices" element={<Invoices />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/staff" element={<Staff />} />
-          <Route path="/expenses" element={<Expenses />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/messages" element={<Messages />} />
-          <Route path="/public-profile" element={<PublicProfile />} />
-          <Route path="/settings" element={<Settings />} />
+        {/* Standalone setup routes (no layout) */}
+        <Route path="/bo/setup" element={<BoSetup />} />
+        <Route path="/staff/setup" element={<StaffSetup />} />
+        <Route path="/bo" element={<BoLayout />}>
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="admindash" element={<AdminDash />} />
+          <Route path="customers" element={<Customers />} />
+          <Route path="orders" element={<Orders />} />
+          <Route path="job-cards" element={<JobCards />} />
+          <Route path="invoices" element={<Invoices />} />
+          <Route path="inventory" element={<Inventory />} />
+          <Route path="staff" element={<Staff />} />
+          <Route path="expenses" element={<Expenses />} />
+          <Route path="reports" element={<Reports />} />
+          <Route path="messages" element={<Messages />} />
+          <Route path="public-profile" element={<PublicProfile />} />
+          <Route path="settings" element={<Settings />} />
+        </Route>
+        <Route path="/staff" element={<StaffLayout />}>
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="customers" element={<Customers />} />
+          <Route path="orders" element={<Orders />} />
+          <Route path="job-cards" element={<JobCards />} />
+          <Route path="invoices" element={<Invoices />} />
+          <Route path="inventory" element={<Inventory />} />
+          <Route path="expenses" element={<Expenses />} />
+          <Route path="reports" element={<Reports />} />
+          <Route path="messages" element={<Messages />} />
+          <Route path="public-profile" element={<PublicProfile />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
         {/* Platform Admin routes */}
         <Route path="/platform-admin" element={<AdminLayout />}>
@@ -82,8 +106,9 @@ function App() {
           <Route path="observability" element={<AdminObservability />} />
         </Route>
         <Route path="*" element={<NotFound />} />
-      </Routes>
-    </BrowserRouter>
+        </Routes>
+      </BrowserRouter>
+    </AppearanceProvider>
   )
 }
 

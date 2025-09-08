@@ -1,4 +1,8 @@
+import { useCan, Forbidden } from "../lib/permissions.jsx"
+
 export default function PublicProfile() {
+  const canView = useCan('public_profile','view')
+  if (!canView) return <Forbidden module="public profile" />
   return (
     <div className="space-y-6">
       <div className="glass rounded-2xl border border-white/10 p-6">

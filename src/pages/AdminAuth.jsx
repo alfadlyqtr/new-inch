@@ -9,6 +9,7 @@ export default function AdminAuth() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [debug, setDebug] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
   const projectUrl = import.meta.env.VITE_SUPABASE_URL
 
   async function handleSubmit(e) {
@@ -80,14 +81,24 @@ export default function AdminAuth() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <input
-              className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-400"
-              placeholder="Password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 pr-16 text-sm text-white placeholder:text-slate-400"
+                placeholder="Password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded-md bg-white/10 border border-white/10 text-slate-200 hover:bg-white/20"
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
             <div className="flex items-center justify-between text-xs text-slate-300">
               <label className="inline-flex items-center gap-2"><input type="checkbox" className="accent-fuchsia-400" /> Remember me</label>
               <a href="#" className="hover:underline">Forgot password?</a>
