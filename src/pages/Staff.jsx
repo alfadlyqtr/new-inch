@@ -12,6 +12,7 @@ export default function Staff() {
   const [businessName, setBusinessName] = useState("")
   const [userIsOwner, setUserIsOwner] = useState(false)
   const [members, setMembers] = useState([])
+  const [onlineIds, setOnlineIds] = useState(new Set()) // users_app.id values currently online
   const [invited, setInvited] = useState([])
   const [activeTab, setActiveTab] = useState("members") // members | codes | payroll
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -91,6 +92,62 @@ export default function Staff() {
       loadCodes(businessId)
     }
   }, [activeTab, businessId])
+
+  // Presence: join business room, track self, and keep a live set of online users_app.id
+  useEffect(() => {
+    let channel
+    let mounted = true
+    let heartbeat
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && channel) {
+        try { channel.track({ users_app_id: userRow?.id, at: Date.now(), vis: 'visible' }) } catch {}
+      }
+    }
+    const onBeforeUnload = () => {
+      try { channel?.untrack?.() } catch {}
+    }
+    ;(async () => {
+      if (!businessId || !userRow?.id) return
+      const { data: sessionData } = await supabase.auth.getSession()
+      const authUser = sessionData?.session?.user
+      if (!authUser) return
+      channel = supabase.channel(`presence:biz:${businessId}`, {
+        config: { presence: { key: authUser.id } },
+      })
+      channel
+        .on('presence', { event: 'sync' }, () => {
+          if (!mounted) return
+          const state = channel.presenceState() || {}
+          // Collect users_app_id from metas
+          const online = new Set()
+          Object.values(state).forEach((metas) => {
+            (metas || []).forEach((m) => { if (m?.users_app_id) online.add(m.users_app_id) })
+          })
+          setOnlineIds(online)
+        })
+      await channel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          try { await channel.track({ users_app_id: userRow.id, at: Date.now() }) } catch {}
+          // Heartbeat every 25s while visible
+          try { clearInterval(heartbeat) } catch {}
+          heartbeat = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+              try { channel.track({ users_app_id: userRow.id, at: Date.now(), hb: true }) } catch {}
+            }
+          }, 25000)
+          document.addEventListener('visibilitychange', onVisibility)
+          window.addEventListener('beforeunload', onBeforeUnload)
+        }
+      })
+    })()
+    return () => {
+      mounted = false
+      try { clearInterval(heartbeat) } catch {}
+      try { document.removeEventListener('visibilitychange', onVisibility) } catch {}
+      try { window.removeEventListener('beforeunload', onBeforeUnload) } catch {}
+      try { channel && channel.unsubscribe() } catch {}
+    }
+  }, [businessId, userRow?.id])
 
   // Load detailed staff profile (query staff by staff_id/email/name within this business)
   async function loadSelectedStaffProfile(sel, bizId) {
@@ -465,8 +522,8 @@ export default function Staff() {
                   <div className="mt-4 space-y-2 text-sm text-slate-300">
                     <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10 overflow-hidden truncate">{m.email || '—'}</div>
                     <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10 overflow-hidden truncate flex items-center gap-1">
-                      <span className="h-2 w-2 rounded-full bg-slate-500"></span>
-                      <span className="text-xs">Offline</span>
+                      <span className={`h-2 w-2 rounded-full ${onlineIds.has(m.id) ? 'bg-emerald-400' : 'bg-slate-500'}`}></span>
+                      <span className="text-xs">{onlineIds.has(m.id) ? 'Online' : 'Offline'}</span>
                     </div>
                   </div>
                   <div className="mt-4 flex items-center gap-2">

@@ -21,17 +21,26 @@ export const AppearanceProvider = ({ children }) => {
   useEffect(() => {
     const root = document.documentElement;
 
-    // Brand colors
-    root.style.setProperty('--color-brand-primary', appearance.customColors.primary);
-    root.style.setProperty('--color-brand-fuchsia', appearance.customColors.secondary);
+    // Apply theme attribute globally so CSS [data-theme] rules take effect
+    const themeAttr = appearance.theme || 'purple';
+    root.setAttribute('data-theme', themeAttr === 'custom' ? 'custom' : themeAttr);
 
-    // Gradient angle
-    root.style.setProperty('--gradient-angle', `${appearance.angle}deg`);
+    // Brand colors: for custom, set inline colors; for presets, allow CSS theme to control
+    if (themeAttr === 'custom') {
+      root.style.setProperty('--color-brand-primary', appearance.customColors.primary);
+      root.style.setProperty('--color-brand-fuchsia', appearance.customColors.secondary);
+    } else {
+      root.style.removeProperty('--color-brand-primary');
+      root.style.removeProperty('--color-brand-fuchsia');
+    }
+
+    // Gradient angle (variable expected by CSS is --brand-angle)
+    root.style.setProperty('--brand-angle', `${appearance.angle}deg`);
 
     // Glow color
     const glowColor = appearance.glow.mode === 'custom' && appearance.glow.color
       ? appearance.glow.color
-      : appearance.customColors.primary;
+      : (themeAttr === 'custom' ? appearance.customColors.primary : getComputedStyle(root).getPropertyValue('--color-brand-primary').trim() || appearance.customColors.primary);
     root.style.setProperty('--glow-color', glowColor);
 
     // Glow intensity

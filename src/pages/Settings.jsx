@@ -337,7 +337,17 @@ export default function Settings() {
         // Persist avatar via secured RPC merge
         await supabase.rpc('api_user_settings_merge_profile', { p_user_profile: { avatar_url: freshUrl } })
         // Fire a local event so the sidebar updates instantly (no flicker, no manual refresh)
-        try { window.dispatchEvent(new CustomEvent('avatar-updated', { detail: { url: freshUrl } })) } catch {}
+        try { 
+          window.dispatchEvent(new CustomEvent('avatar-updated', { detail: { url: freshUrl } }))
+          document.dispatchEvent(new CustomEvent('avatar-updated', { detail: { url: freshUrl } }))
+          try {
+            const bc = new BroadcastChannel('app_events')
+            bc.postMessage({ type: 'avatar-updated', url: freshUrl, ts: Date.now() })
+            bc.close()
+          } catch {}
+          // Global fallback: call setter if a layout exposed it
+          try { window.__setSidebarAvatar?.(freshUrl) } catch {}
+        } catch {}
       } catch { /* ignore */ }
       setUserNotice("Avatar uploaded ✓")
       setTimeout(() => setUserNotice("") , 2000)

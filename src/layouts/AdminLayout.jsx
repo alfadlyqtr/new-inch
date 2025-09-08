@@ -71,6 +71,16 @@ export default function AdminLayout() {
 
   // No admin privilege gating beyond authentication
 
+  // Listen for avatar-updated to keep parity with other layouts (future avatar rendering)
+  useEffect(() => {
+    const onAvatarUpdated = (e) => {
+      // No avatar element here yet; log to verify event reaches this layout
+      try { console.debug('[admin] avatar-updated', e?.detail?.url) } catch {}
+    }
+    window.addEventListener('avatar-updated', onAvatarUpdated)
+    return () => window.removeEventListener('avatar-updated', onAvatarUpdated)
+  }, [])
+
   async function handleSignOut() {
     try {
       setSigningOut(true)

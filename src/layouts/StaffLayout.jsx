@@ -5,6 +5,7 @@ import { PermissionProvider } from "../lib/permissions.jsx"
 import { normalizeModuleKey } from "../lib/permissions-config.js"
 import { ensureCompletePermissions } from "../pages/staff/staff-permissions-defaults.js"
 import 'driver.js/dist/driver.css'
+import { useAppearance } from "../contexts/AppearanceContext"
 
 const navItems = [
   { to: "/staff/dashboard", label: "dashboard", icon: "🏠" },
@@ -52,6 +53,7 @@ export default function StaffLayout() {
   const [approved, setApproved] = useState(true)
   const [setupDone, setSetupDone] = useState(true)
   const [isOwner, setIsOwner] = useState(false)
+  const { updateAppearance } = useAppearance()
 
   useEffect(() => {
     let mounted = true
@@ -75,7 +77,7 @@ export default function StaffLayout() {
         // find users_app then staff row and also load name/avatar
         const { data: app } = await supabase
           .from('users_app')
-          .select('id, owner_name, full_name, staff_name, is_business_owner, is_approved, setup_completed')
+          .select('id, owner_name, full_name, staff_name, is_business_owner, is_approved, setup_completed, business_id')
           .eq('auth_user_id', user.id)
           .maybeSingle()
         const userAppId = app?.id
@@ -89,11 +91,38 @@ export default function StaffLayout() {
           try {
             const { data: us } = await supabase
               .from('user_settings')
-              .select('user_profile')
+              .select('user_profile, appearance_settings')
               .eq('user_id', userAppId)
               .maybeSingle()
             const url = us?.user_profile?.avatar_url || ""
             setAvatarUrl(url ? `${url}?v=${Date.now()}` : "")
+            const appr = us?.appearance_settings || null
+            if (appr) {
+              const t = appr.theme || 'purple'
+              const cust = appr.custom || {}
+              const ang = Number.isFinite(appr.angle) ? appr.angle : 90
+              const glow = appr.glow || {}
+              updateAppearance({
+                theme: t === 'custom' ? 'custom' : t,
+                customColors: { primary: cust.primary || '#7C3AED', secondary: cust.accent || '#D946EF' },
+                angle: ang,
+                glow: { mode: glow.mode === 'custom' ? 'custom' : 'match', color: glow.mode === 'custom' ? glow.color : null, depth: Number.isFinite(glow.depth) ? glow.depth : 60 },
+              })
+            } else if (userAppId) {
+              // Fallback to per-user localStorage
+              try {
+                const getLsKey = (k) => `u:${userAppId}:${k}`
+                const saved = localStorage.getItem(getLsKey('theme')) || 'purple'
+                if (saved === 'custom') {
+                  const savedCustom = JSON.parse(localStorage.getItem(getLsKey('themeCustom')) || '{}')
+                  const fallback = { primary: '#7C3AED', accent: '#D946EF' }
+                  const next = { ...fallback, ...savedCustom }
+                  updateAppearance({ theme: 'custom', customColors: next })
+                } else {
+                  updateAppearance({ theme: saved })
+                }
+              } catch {}
+            }
           } catch {}
         }
         if (!userAppId) return
@@ -145,6 +174,59 @@ export default function StaffLayout() {
       } catch {}
     })()
   }, [session])
+
+  // Presence: advertise online for staff sessions
+  useEffect(() => {
+    if (!usersAppId || !businessId) return
+    let channel
+    ;(async () => {
+      const { data: s } = await supabase.auth.getSession()
+      const authUser = s?.session?.user
+      if (!authUser) return
+      channel = supabase.channel(`presence:biz:${businessId}`, { config: { presence: { key: authUser.id } } })
+      await channel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          try { await channel.track({ users_app_id: usersAppId, at: Date.now(), from: 'staff-layout' }) } catch {}
+        }
+      })
+    })()
+    return () => { try { channel?.unsubscribe() } catch {} }
+  }, [usersAppId, businessId])
+
+  useEffect(() => {
+    const apply = (url) => {
+      if (!url) return
+      const bust = url.includes('?') ? `&r=${Date.now()}` : `?r=${Date.now()}`
+      setAvatarUrl(`${url}${bust}`)
+    }
+    const onAvatarUpdated = (e) => {
+      const url = e?.detail?.url || ''
+      try { console.debug('[staff] avatar-updated', url) } catch {}
+      apply(url)
+    }
+    window.addEventListener('avatar-updated', onAvatarUpdated)
+    document.addEventListener('avatar-updated', onAvatarUpdated)
+
+    try { window.__setSidebarAvatar = apply } catch {}
+
+    let bc
+    try {
+      bc = new BroadcastChannel('app_events')
+      bc.onmessage = (m) => {
+        if (m?.data?.type === 'avatar-updated') {
+          try { console.debug('[staff] bc avatar-updated', m.data.url) } catch {}
+          apply(m.data.url)
+        }
+      }
+    } catch {}
+
+    return () => {
+      window.removeEventListener('avatar-updated', onAvatarUpdated)
+      document.removeEventListener('avatar-updated', onAvatarUpdated)
+      try { bc && (bc.onmessage = null, bc.close()) } catch {}
+      try { if (window.__setSidebarAvatar === apply) window.__setSidebarAvatar = undefined } catch {}
+    }
+  }, [])
 
   if (!authChecked) return <div className="min-h-screen bg-app text-slate-200 flex items-center justify-center">Loading…</div>
   if (!session) return <Navigate to="/auth" replace />
