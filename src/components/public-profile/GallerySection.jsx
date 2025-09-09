@@ -1,6 +1,8 @@
-import React from "react"
+import React, { useState } from "react"
+import { supabase } from "../../lib/supabaseClient.js"
 
-export default function GallerySection({ value = { images: [], videos: [], display_style: 'grid' }, onChange }) {
+export default function GallerySection({ businessId, value = { images: [], videos: [], display_style: 'grid' }, onChange }) {
+  const [uploadingId, setUploadingId] = useState(null)
   function addImage() {
     const img = { id: crypto.randomUUID(), url: '', caption: '', caption_ar: '', category: '', order: (value.images?.length || 0) + 1 }
     onChange?.({ ...value, images: [...(value.images || []), img] })
@@ -11,6 +13,23 @@ export default function GallerySection({ value = { images: [], videos: [], displ
   }
   function removeImage(id) {
     onChange?.({ ...value, images: (value.images || []).filter((i) => i.id !== id) })
+  }
+  async function onPickFile(file, imgId) {
+    if (!file || !imgId) return
+    try {
+      setUploadingId(imgId)
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const path = `gallery/${businessId || 'unknown'}/${imgId}.${ext}`
+      const { error: upErr } = await supabase.storage.from('business-logos').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from('business-logos').getPublicUrl(path)
+      const url = pub?.publicUrl ? `${pub.publicUrl}?t=${Date.now()}` : ''
+      updateImage(imgId, { url })
+    } catch (e) {
+      // leave quiet; UI remains usable
+    } finally {
+      setUploadingId(null)
+    }
   }
   function addVideo() {
     const vid = { url: '', title: '', title_ar: '', description: '', description_ar: '' }
@@ -36,8 +55,17 @@ export default function GallerySection({ value = { images: [], videos: [], displ
       <div className="space-y-2">
         {(value.images || []).length === 0 && <div className="text-slate-400">No images yet.</div>}
         {(value.images || []).map((img) => (
-          <div key={img.id} className="grid grid-cols-1 md:grid-cols-5 gap-2 rounded-xl border border-white/10 p-3 bg-white/5">
-            <input value={img.url || ''} onChange={(e) => updateImage(img.id, { url: e.target.value })} placeholder="Image URL" className="md:col-span-2 rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40" />
+          <div key={img.id} className="grid grid-cols-1 md:grid-cols-6 gap-2 rounded-xl border border-white/10 p-3 bg-white/5">
+            <div className="md:col-span-2 flex items-center gap-3">
+              <div className="h-16 w-16 rounded-lg overflow-hidden bg-white/10 border border-white/10 flex items-center justify-center">
+                {img.url ? <img src={img.url} alt="" className="h-full w-full object-cover" /> : <div className="h-6 w-6 rounded bg-white/10" />}
+              </div>
+              <div>
+                <input type="file" accept="image/*" onChange={(e)=> onPickFile(e.target.files?.[0], img.id)} className="block text-xs" />
+                <input value={img.url || ''} onChange={(e) => updateImage(img.id, { url: e.target.value })} placeholder="Image URL (optional)" className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40" />
+                {uploadingId === img.id && <div className="text-xs text-slate-300 mt-1">Uploading…</div>}
+              </div>
+            </div>
             <input value={img.caption || ''} onChange={(e) => updateImage(img.id, { caption: e.target.value })} placeholder="Caption (EN)" className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40" />
             <input dir="rtl" value={img.caption_ar || ''} onChange={(e) => updateImage(img.id, { caption_ar: e.target.value })} placeholder="التسمية" className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40" />
             <div className="flex items-center gap-2">
