@@ -3,6 +3,10 @@ import { supabase } from "../../lib/supabaseClient.js"
 
 export default function GallerySection({ businessId, value = { images: [], videos: [], display_style: 'grid' }, onChange }) {
   const [uploadingId, setUploadingId] = useState(null)
+  const [uploadingBatch, setUploadingBatch] = useState(false)
+  const [uploadError, setUploadError] = useState("")
+  const MAX_PER_BATCH = 10
+  const MAX_SIZE = 8 * 1024 * 1024 // 8 MB
   function addImage() {
     const img = { id: crypto.randomUUID(), url: '', caption: '', caption_ar: '', category: '', order: (value.images?.length || 0) + 1 }
     onChange?.({ ...value, images: [...(value.images || []), img] })
@@ -14,9 +18,15 @@ export default function GallerySection({ businessId, value = { images: [], video
   function removeImage(id) {
     onChange?.({ ...value, images: (value.images || []).filter((i) => i.id !== id) })
   }
+  function isImage(file) {
+    return file && file.type && file.type.startsWith('image/')
+  }
   async function onPickFile(file, imgId) {
     if (!file || !imgId) return
+    if (!isImage(file)) { setUploadError('Only image files are allowed.'); return }
+    if (file.size > MAX_SIZE) { setUploadError('Each image must be 8 MB or less.'); return }
     try {
+      setUploadError("")
       setUploadingId(imgId)
       const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
       const path = `gallery/${businessId || 'unknown'}/${imgId}.${ext}`
@@ -26,9 +36,45 @@ export default function GallerySection({ businessId, value = { images: [], video
       const url = pub?.publicUrl ? `${pub.publicUrl}?t=${Date.now()}` : ''
       updateImage(imgId, { url })
     } catch (e) {
-      // leave quiet; UI remains usable
+      setUploadError('Upload failed. Please try again.')
     } finally {
       setUploadingId(null)
+    }
+  }
+  async function onPickMultiple(filesList) {
+    const files = Array.from(filesList || [])
+    if (files.length === 0) return
+    if (files.length > MAX_PER_BATCH) {
+      setUploadError(`Please select up to ${MAX_PER_BATCH} images at a time.`)
+      return
+    }
+    // Validate all files before starting
+    for (const f of files) {
+      if (!isImage(f)) { setUploadError('Only image files are allowed.'); return }
+      if (f.size > MAX_SIZE) { setUploadError('Each image must be 8 MB or less.'); return }
+    }
+    setUploadError("")
+    setUploadingBatch(true)
+    try {
+      const newItems = []
+      const uploads = files.map(async (file) => {
+        const id = crypto.randomUUID()
+        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+        const path = `gallery/${businessId || 'unknown'}/${id}.${ext}`
+        const { error: upErr } = await supabase.storage.from('business-logos').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' })
+        if (upErr) throw upErr
+        const { data: pub } = supabase.storage.from('business-logos').getPublicUrl(path)
+        const url = pub?.publicUrl ? `${pub.publicUrl}?t=${Date.now()}` : ''
+        newItems.push({ id, url, caption: '', caption_ar: '', category: '', order: (value.images?.length || 0) + newItems.length + 1 })
+      })
+      await Promise.allSettled(uploads)
+      if (newItems.length) {
+        onChange?.({ ...value, images: [ ...(value.images || []), ...newItems ] })
+      }
+    } catch (e) {
+      setUploadError('Some files failed to upload. Please try again.')
+    } finally {
+      setUploadingBatch(false)
     }
   }
   function addVideo() {
@@ -50,8 +96,15 @@ export default function GallerySection({ businessId, value = { images: [], video
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="text-white/90 font-medium">Images</div>
-        <button onClick={addImage} className="px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10">Add Image</button>
+        <div className="flex items-center gap-2">
+          <label className="px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10 cursor-pointer">
+            <span>{uploadingBatch ? 'Uploading…' : 'Upload up to 10 images'}</span>
+            <input type="file" accept="image/*" multiple onChange={(e)=> onPickMultiple(e.target.files)} className="hidden" />
+          </label>
+          <button onClick={addImage} className="px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10">Add Image</button>
+        </div>
       </div>
+      {uploadError && <div className="text-rose-300 text-sm">{uploadError}</div>}
       <div className="space-y-2">
         {(value.images || []).length === 0 && <div className="text-slate-400">No images yet.</div>}
         {(value.images || []).map((img) => (
