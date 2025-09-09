@@ -38,6 +38,8 @@ export default function Settings() {
   const [logoUrl, setLogoUrl] = useState("")
   const logoInputRef = useRef(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [businessNotice, setBusinessNotice] = useState("")
+  const [savingBusiness, setSavingBusiness] = useState(false)
 
   // User settings tab state
   const [userDisplayName, setUserDisplayName] = useState("")
@@ -189,25 +191,54 @@ export default function Settings() {
         // Show Business ID immediately from users_app
         if (user.business_id) setBusinessId(user.business_id)
 
-        // Business
+        // Business (try 'business' then 'businesses')
         if (user.business_id) {
-          const { data: biz, error: bErr } = await supabase
-            .from("business")
-            .select("id, business_name, owner_name, contact_phone, contact_email, address, logo_url")
-            .eq("id", user.business_id)
-            .limit(1)
-            .maybeSingle()
-          if (bErr) {
-            console.error("Failed to load business due to RLS/policy or missing row:", bErr)
+          let biz = null
+          {
+            const { data, error } = await supabase
+              .from("business")
+              .select("id, business_name, owner_name, contact_phone, contact_email, address, logo_url")
+              .eq("id", user.business_id)
+              .maybeSingle()
+            if (!error && data) biz = data
+          }
+          if (!biz) {
+            const { data, error } = await supabase
+              .from("businesses")
+              .select("id, name, owner_name, contact_phone, contact_email, address, logo_url")
+              .eq("id", user.business_id)
+              .maybeSingle()
+            if (!error && data) biz = { ...data, business_name: data.name }
           }
           if (biz) {
             setBusinessId(biz.id)
-            setBusinessName(biz.business_name || "")
+            const bName = biz.business_name || ""
+            setBusinessName(bName)
+            try { if (bName) localStorage.setItem('company_name', bName) } catch {}
             setOwnerNameInput(biz.owner_name || user.owner_name || user.full_name || "")
             setBusinessPhone(biz.contact_phone || "")
             setBusinessEmail(biz.contact_email || user.email || "")
             setBusinessAddress(biz.address || "")
-            setLogoUrl(biz.logo_url || "")
+            const fresh = biz.logo_url ? `${biz.logo_url}?v=${Date.now()}` : ""
+            setLogoUrl(fresh)
+            try { if (fresh) localStorage.setItem('company_logo_url', fresh) } catch {}
+          } else {
+            // Fallback: derive logo from user_settings.company_profile
+            try {
+              const { data: us } = await supabase
+                .from('user_settings')
+                .select('user_profile, company_profile')
+                .eq('user_id', user.id)
+                .maybeSingle()
+              const cLogo = us?.company_profile?.logo_url
+              if (cLogo) {
+                const fresh = `${cLogo}?v=${Date.now()}`
+                setLogoUrl(fresh)
+                try { localStorage.setItem('company_logo_url', fresh) } catch {}
+              }
+              const cName = us?.company_profile?.name
+              if (cName) { try { localStorage.setItem('company_name', cName) } catch {} }
+            } catch {}
           }
         }
 
@@ -267,15 +298,113 @@ export default function Settings() {
     if (!userRow || !userRow.business_id) return
     // Only business owners can save
     if (!userRow.is_business_owner) return
-    // Update business info via secured RPC
-    await supabase.rpc('api_business_update_info', {
-      p_owner_name: ownerNameInput || null,
-      p_contact_phone: businessPhone || null,
-      p_address: businessAddress || null,
-    })
-    // Update my display name (owner path) via secured RPC
-    if (ownerNameInput && ownerNameInput !== userRow.owner_name) {
-      await supabase.rpc('api_me_update_display_name', { p_owner_name: ownerNameInput, p_staff_name: null })
+    try {
+      setSavingBusiness(true)
+      setBusinessNotice("")
+      // Update business info via secured RPC
+      let infoErr = null
+      {
+        const { error } = await supabase.rpc('api_business_update_info', {
+          p_owner_name: ownerNameInput || null,
+          p_contact_phone: businessPhone || null,
+          p_address: businessAddress || null,
+        })
+        infoErr = error || null
+      }
+      if (infoErr) {
+        // Fallback: direct update on business table
+        let err = null
+        const try1 = await supabase
+          .from('business')
+          .update({ owner_name: ownerNameInput || null, contact_phone: businessPhone || null, address: businessAddress || null })
+          .eq('id', userRow.business_id)
+        if (try1.error) {
+          err = try1.error
+          const try2 = await supabase
+            .from('businesses')
+            .update({ owner_name: ownerNameInput || null, contact_phone: businessPhone || null, address: businessAddress || null })
+            .eq('id', userRow.business_id)
+          if (try2.error) err = try2.error; else err = null
+        }
+        if (err) throw err
+      }
+      // Update my display name (owner path) via secured RPC
+      if (ownerNameInput && ownerNameInput !== userRow.owner_name) {
+        const { error } = await supabase.rpc('api_me_update_display_name', { p_owner_name: ownerNameInput, p_staff_name: null })
+        if (error) throw error
+      }
+      // Some backends may overwrite unspecified fields; re-assert logo_url if we have one
+      try {
+        if (logoUrl) {
+          const baseLogo = logoUrl.split('?')[0]
+          let rpcErr = null
+          {
+            const { error } = await supabase.rpc('api_business_update_logo', { p_logo_url: baseLogo })
+            rpcErr = error || null
+          }
+          if (rpcErr) {
+            let err = null
+            const t1 = await supabase.from('business').update({ logo_url: baseLogo }).eq('id', userRow.business_id)
+            if (t1.error) {
+              err = t1.error
+              const t2 = await supabase.from('businesses').update({ logo_url: baseLogo }).eq('id', userRow.business_id)
+              if (t2.error) err = t2.error; else err = null
+            }
+            if (err) throw err
+          }
+        }
+      } catch (e) { try { console.error('Re-assert logo_url failed', e) } catch {} }
+      // Re-fetch business to avoid local state drift and ensure logo persists
+      try {
+        let biz = null
+        {
+          const { data, error } = await supabase
+            .from("business")
+            .select("id, business_name, owner_name, contact_phone, contact_email, address, logo_url")
+            .eq("id", userRow.business_id)
+            .maybeSingle()
+          if (!error && data) biz = data
+        }
+        if (!biz) {
+          const { data, error } = await supabase
+            .from("businesses")
+            .select("id, name, owner_name, contact_phone, contact_email, address, logo_url")
+            .eq("id", userRow.business_id)
+            .maybeSingle()
+          if (!error && data) biz = { ...data, business_name: data.name }
+        }
+        if (biz) {
+          setBusinessName(biz.business_name || "")
+          setOwnerNameInput(biz.owner_name || ownerNameInput)
+          setBusinessPhone(biz.contact_phone || businessPhone)
+          setBusinessEmail(biz.contact_email || businessEmail)
+          setBusinessAddress(biz.address || businessAddress)
+          if (biz.logo_url) {
+            const fresh = `${biz.logo_url}?v=${Date.now()}`
+            setLogoUrl(fresh)
+      try { localStorage.setItem('company_logo_url', fresh) } catch {}
+            try {
+              const detail = { url: fresh }
+              window.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+              document.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+              try { const bc = new BroadcastChannel('app_events'); bc.postMessage({ type: 'business-logo-updated', url: fresh, ts: Date.now() }); bc.close() } catch {}
+            } catch {}
+          }
+        }
+      } catch {}
+      setBusinessNotice("Business info saved ✓")
+      setTimeout(() => setBusinessNotice("") , 2500)
+      try {
+        const detail = { name: newName || ownerNameInput }
+        window.dispatchEvent(new CustomEvent('business-name-updated', { detail }))
+        document.dispatchEvent(new CustomEvent('business-name-updated', { detail }))
+        try { const bc = new BroadcastChannel('app_events'); bc.postMessage({ type: 'business-name-updated', name: detail.name, ts: Date.now() }); bc.close() } catch {}
+      } catch {}
+    } catch (e) {
+      console.error('saveBusiness failed', e)
+      alert(e?.message || 'Failed to save business info')
+    } finally {
+      setSavingBusiness(false)
     }
   }
 
@@ -405,9 +534,18 @@ export default function Settings() {
       if (file.size > MAX_MB * 1024 * 1024) throw new Error(`File too large. Max ${MAX_MB}MB`)
 
       // Upload to Supabase Storage (bucket: 'business-logos')
+      // Preflight: check bucket access
+      try {
+        await supabase.storage.from("business-logos").list(userRow.business_id, { limit: 1 })
+      } catch (pf) {
+        console.error("Storage preflight failed", pf)
+      }
+
       const ext = file.name.split(".").pop()?.toLowerCase() || "png"
       const path = `${userRow.business_id}/${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from("business-logos").upload(path, file, { upsert: true, cacheControl: "3600" })
+      const { error: upErr } = await supabase.storage
+        .from("business-logos")
+        .upload(path, file, { upsert: true, cacheControl: "3600", contentType: file.type || `image/${ext}` })
       if (upErr) throw upErr
 
       // Get public URL
@@ -415,14 +553,69 @@ export default function Settings() {
       const publicUrl = pub?.publicUrl || ""
       if (!publicUrl) throw new Error("Could not get public URL")
 
-      // Persist on business row via secured RPC
-      await supabase.rpc('api_business_update_logo', { p_logo_url: publicUrl })
-      setLogoUrl(publicUrl)
+      // Show immediately (even if DB update later fails) and broadcast
+      const fresh = `${publicUrl}?v=${Date.now()}`
+      setLogoUrl(fresh)
+      setBusinessNotice("Logo saved ✓ (pending sync)")
+      setTimeout(() => setBusinessNotice("") , 1500)
+      try {
+        const detail = { url: fresh }
+        window.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+        document.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+        try { const bc = new BroadcastChannel('app_events'); bc.postMessage({ type: 'business-logo-updated', url: fresh, ts: Date.now() }); bc.close() } catch {}
+      } catch {}
+
+      // Persist on business row via secured RPC (best-effort)
+      {
+        const { error: rpcErr } = await supabase.rpc('api_business_update_logo', { p_logo_url: publicUrl })
+        if (rpcErr) {
+          // Fallback: direct table update; if that fails too, upsert into user_settings.company_profile
+          let err = null
+          const t1 = await supabase.from('business').update({ logo_url: publicUrl }).eq('id', userRow.business_id)
+          if (t1.error) {
+            err = t1.error
+            const t2 = await supabase.from('businesses').update({ logo_url: publicUrl }).eq('id', userRow.business_id)
+            if (t2.error) err = t2.error; else err = null
+          }
+          if (err) {
+            // Persist on user_settings.company_profile
+            await supabase.from('user_settings').upsert(
+              { user_id: userRow.id, company_profile: { logo_url: publicUrl } },
+              { onConflict: 'user_id' }
+            )
+          }
+        }
+      }
+      // Attempt to confirm via re-fetch (non-blocking UI already updated)
+      setTimeout(async () => {
+        try {
+          const { data: biz } = await supabase
+            .from("business")
+            .select("logo_url")
+            .eq("id", userRow.business_id)
+            .maybeSingle()
+          const effective = biz?.logo_url || publicUrl
+          const confirmed = `${effective}?v=${Date.now()}`
+          setLogoUrl(confirmed)
+          try { localStorage.setItem('company_logo_url', confirmed) } catch {}
+        } catch {}
+      }, 100)
+      // Broadcast so other open tabs/components update instantly
+      try {
+        const detail = { url: fresh }
+        window.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+        document.dispatchEvent(new CustomEvent('business-logo-updated', { detail }))
+        try {
+          const bc = new BroadcastChannel('app_events')
+          bc.postMessage({ type: 'business-logo-updated', url: fresh, ts: Date.now() })
+          bc.close()
+        } catch {}
+      } catch {}
     } catch (e) {
       console.error("Logo upload failed", e)
       const msg = e?.message?.includes("Bucket not found")
         ? "Storage bucket 'business-logos' not found. Create it in Supabase > Storage, then retry."
-        : (e.message || "Failed to upload logo")
+        : (e.message || "Failed to upload logo. Check Console for details.")
       alert(msg)
     } finally {
       setUploadingLogo(false)
@@ -576,6 +769,7 @@ export default function Settings() {
         {!userRow?.is_business_owner && (
           <div className="mt-3 text-xs text-amber-300/90">Staff can view these details but cannot modify them.</div>
         )}
+        {businessNotice && (<div className="mt-3 text-xs text-emerald-300/90">{businessNotice}</div>)}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">Business ID</label>
@@ -647,7 +841,7 @@ export default function Settings() {
           </div>
         </div>
         <div className="mt-6 flex justify-end">
-          <button id="settings-save-business" onClick={saveBusiness} disabled={loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Business Info</button>
+          <button id="settings-save-business" onClick={saveBusiness} disabled={savingBusiness || loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingBusiness ? 'Saving…' : 'Save Business Info'}</button>
         </div>
       </section>
       )}

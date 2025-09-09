@@ -32,6 +32,7 @@ import AdminSupport from "./pages/admin/Support.jsx"
 import AdminObservability from "./pages/admin/Observability.jsx"
 import PendingApproval from "./pages/PendingApproval.jsx"
 import Signup from "./pages/Signup.jsx"
+import PublicBusiness from "./pages/PublicBusiness.jsx"
 import { supabase } from "./lib/supabaseClient.js"
 import { AppearanceProvider } from "./contexts/AppearanceContext"
 
@@ -93,6 +94,10 @@ function App() {
           <Route path="public-profile" element={<PublicProfile />} />
           <Route path="settings" element={<Settings />} />
         </Route>
+        {/* Public profile viewer routes (place before 404) */}
+        <Route path="/business/:id" element={<PublicBusiness />} />
+        {/* Slug viewer is namespaced to avoid conflicts with app routes */}
+        <Route path="/p/:slug" element={<PublicBusiness />} />
         {/* Platform Admin routes */}
         <Route path="/platform-admin" element={<AdminLayout />}>
           <Route index element={<AdminOverview />} />
