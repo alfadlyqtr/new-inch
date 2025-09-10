@@ -1,9 +1,16 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
   "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.inch.qa" }],
+      "destination": "https://inch.qa/$1",
+      "permanent": true
+    },
     { "source": "/index.html", "destination": "/", "permanent": true }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/.*", "dest": "/index.html" }
   ]
 }
