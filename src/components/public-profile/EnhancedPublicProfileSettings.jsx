@@ -119,8 +119,11 @@ export default function EnhancedPublicProfileSettings() {
   const [userAppId, setUserAppId] = useState(null)
   const lastSavedRef = useRef("")
 
-  // Compute slug from canonical business name (not user editable)
-  const derivedSlug = useMemo(() => slugifyName(business?.name || ''), [business?.name])
+  // Prefer existing custom_url (if backend already set it); otherwise derive from business name
+  const derivedSlug = useMemo(() => {
+    if (business?.custom_url) return String(business.custom_url)
+    return slugifyName(business?.name || business?.business_name || '')
+  }, [business?.custom_url, business?.name, business?.business_name])
 
   const businessPublicUrl = useMemo(() => {
     const slug = derivedSlug
@@ -167,7 +170,8 @@ export default function EnhancedPublicProfileSettings() {
         if (!mounted) return
         setBusiness((prev) => {
           const cachedName = (() => { try { return localStorage.getItem('company_name') || null } catch { return null } })()
-          return biz ? { ...biz, name: biz.name || cachedName || biz.name } : { id: bizId, name: cachedName || undefined }
+          const nm = biz?.name || biz?.business_name || cachedName || undefined
+          return biz ? { ...biz, name: nm } : { id: bizId, name: nm }
         })
         if (biz?.logo_url) {
           setLogoUrl(biz.logo_url)

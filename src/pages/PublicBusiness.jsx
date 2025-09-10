@@ -1,14 +1,22 @@
 import React, { useEffect, useState } from "react"
-import { useParams, useLocation } from "react-router-dom"
+import { useParams, useLocation, useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 import PublicProfilePreview from "../components/public-profile/PublicProfilePreview.jsx"
 
 export default function PublicBusiness() {
-  const { id, slug } = useParams()
+  // Support multiple route shapes: /business/:idOrSlug, /p/:slug, /:slug
+  const params = useParams()
+  const idOrSlug = params.idOrSlug || params.id || params.slug || null
+  // Classify param as UUID vs slug
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  const isUuid = !!(idOrSlug && uuidRe.test(idOrSlug))
+  const id = isUuid ? idOrSlug : null
+  const slug = !isUuid ? idOrSlug : null
   const [loading, setLoading] = useState(true)
   const [business, setBusiness] = useState(null)
   const [error, setError] = useState("")
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
     let mounted = true
@@ -16,11 +24,11 @@ export default function PublicBusiness() {
       try {
         setLoading(true)
         setError("")
-        // Prefer a safe RPC to avoid 400s
         let row = null
+        // 1) Preferred: safe public RPC (anon allowed)
         try {
           const { data, error } = await supabase.rpc('api_public_business_read_safe', { p_id: id || null, p_slug: slug || null })
-          if (!error && data && Array.isArray(data) && data[0]) row = data[0]
+          if (!error && Array.isArray(data) && data[0]) row = data[0]
         } catch {/* swallow */}
         if (!row) {
           // Fallback: derive from user_settings.company_profile for logo so at least branding shows
@@ -47,6 +55,11 @@ export default function PublicBusiness() {
           setError('This profile is not public yet.')
           return
         }
+        // If the incoming path was a slug, normalize by redirecting to canonical /business/:id
+        if (slug && row?.id) {
+          navigate(`/business/${row.id}`, { replace: true })
+          return
+        }
         if (mounted) setBusiness(row)
       } catch (e) {
         // swallow to avoid noisy console
@@ -56,7 +69,7 @@ export default function PublicBusiness() {
       }
     })()
     return () => { mounted = false }
-  }, [id, slug, location.key])
+  }, [id, slug, idOrSlug, location.key])
 
   if (loading) return <div className="min-h-screen bg-app text-slate-200 flex items-center justify-center">Loading…</div>
   if (error) return (

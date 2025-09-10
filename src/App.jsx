@@ -95,9 +95,11 @@ function App() {
           <Route path="settings" element={<Settings />} />
         </Route>
         {/* Public profile viewer routes (place before 404) */}
-        <Route path="/business/:id" element={<PublicBusiness />} />
+        <Route path="/business/:idOrSlug" element={<PublicBusiness />} />
         {/* Slug viewer is namespaced to avoid conflicts with app routes */}
         <Route path="/p/:slug" element={<PublicBusiness />} />
+        {/* Pretty root slug: inch.qa/<slug>. Keep near the end so specific app routes win first. */}
+        <Route path=":slug" element={<PublicBusiness />} />
         {/* Platform Admin routes */}
         <Route path="/platform-admin" element={<AdminLayout />}>
           <Route index element={<AdminOverview />} />
