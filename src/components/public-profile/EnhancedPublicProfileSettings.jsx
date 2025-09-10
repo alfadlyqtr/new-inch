@@ -31,6 +31,16 @@ function deepMerge(target, source) {
   return out
 }
 
+// Immutable, URL-safe slug derived from business name
+function slugifyName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+}
+
 const defaultSettings = {
   is_public: false,
   address: "",
@@ -109,10 +119,13 @@ export default function EnhancedPublicProfileSettings() {
   const [userAppId, setUserAppId] = useState(null)
   const lastSavedRef = useRef("")
 
+  // Compute slug from canonical business name (not user editable)
+  const derivedSlug = useMemo(() => slugifyName(business?.name || ''), [business?.name])
+
   const businessPublicUrl = useMemo(() => {
-    const slug = profileData?.custom_url || business?.custom_url
+    const slug = derivedSlug
     return slug ? `inch.qa/${slug}` : business?.id ? `inch.qa/business/${business.id}` : ""
-  }, [business, profileData])
+  }, [business, derivedSlug])
 
   useEffect(() => {
     // Immediate local fallback: logo from localStorage
@@ -229,11 +242,11 @@ export default function EnhancedPublicProfileSettings() {
     if (!business?.id) return
     try {
       if (showSpinner) setSaving(true)
-      const payload = profileData
+      const payload = { ...profileData, custom_url: derivedSlug }
       // Use RPC to avoid table/column mismatch 400s
       const { error } = await supabase.rpc('api_business_update_public_profile_settings', {
         p_settings: payload,
-        p_custom_url: payload?.custom_url ?? null,
+        p_custom_url: derivedSlug || null,
         p_is_public: payload?.is_public ?? null,
       })
       if (error) throw error
@@ -333,7 +346,15 @@ export default function EnhancedPublicProfileSettings() {
           <h1 className="text-xl font-semibold text-white/90">Public Profile</h1>
           <p className="text-sm text-slate-400 mt-1">Configure your public storefront.</p>
           {businessPublicUrl && (
-            <p className="text-xs text-slate-400 mt-2">Public URL: <a className="underline hover:text-white" href={`https://${businessPublicUrl}`} target="_blank" rel="noreferrer">{businessPublicUrl}</a></p>
+            <div className="text-xs text-slate-400 mt-2 flex items-center gap-2">
+              <span>Public URL:</span>
+              <a className="underline hover:text-white" href={`https://${businessPublicUrl}`} target="_blank" rel="noreferrer">{businessPublicUrl}</a>
+              <button
+                type="button"
+                onClick={async () => { try { await navigator.clipboard.writeText(`https://${businessPublicUrl}`) } catch {} }}
+                className="px-2 py-0.5 rounded-md bg-white/10 border border-white/10 text-slate-200 hover:bg-white/20"
+              >Copy</button>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -394,7 +415,6 @@ function LabeledTextarea({ label, ...props }) {
 function BasicInfoTab({ data, onUpdate, logoUrl }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <LabeledInput label="Custom URL Slug" value={data.custom_url || ''} onChange={(e) => onUpdate({ custom_url: e.target.value })} placeholder="your-business" />
       <div className="space-y-1.5">
         <span className="text-sm text-white/80">Business Logo</span>
         <div className="flex items-center gap-3">

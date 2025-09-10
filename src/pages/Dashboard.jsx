@@ -102,6 +102,28 @@ export default function Dashboard() {
     })()
     return () => { cancelled = true }
   }, [])
+
+  // Permission-aware stats (only show modules the staff can view)
+  const canViewOrders = useCan('orders', 'view')
+  const canViewCustomers = useCan('customers', 'view')
+  const canViewInvoices = useCan('invoices', 'view')
+  const canViewInventory = useCan('inventory', 'view')
+
+  const stats = [
+    { label: "Total Orders", value: 0, icon: "📦", can: canViewOrders },
+    { label: "Total Customers", value: 0, icon: "👥", can: canViewCustomers },
+    // Revenue typically relates to invoices; if you prefer orders, switch to canViewOrders
+    { label: "Total Revenue", value: "$0", icon: "💵", can: canViewInvoices },
+    { label: "Pending Orders", value: 0, icon: "⏳", can: canViewOrders },
+    { label: "Low Stock Items", value: 0, icon: "⚠️", can: canViewInventory },
+  ]
+  const visibleStats = stats.filter(s => s.can)
+
+  const canCreateOrder = useCan('orders','create')
+  const canCreateCustomer = useCan('customers','create')
+  const canCreateJobCard = useCan('jobcards','create')
+  const canCreateExpense = useCan('expenses','create')
+
   const dateStr = now.toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
@@ -113,20 +135,6 @@ export default function Dashboard() {
     minute: "2-digit",
     second: "2-digit",
   })
-
-  const stats = [
-    { label: "Total Orders", value: 0, icon: "📦" },
-    { label: "Total Customers", value: 0, icon: "👥" },
-    { label: "Total Revenue", value: "$0", icon: "💵" },
-    { label: "Pending Orders", value: 0, icon: "⏳" },
-    { label: "Low Stock Items", value: 0, icon: "⚠️" },
-  ]
-
-  const canCreateOrder = useCan('orders','create')
-  const canCreateCustomer = useCan('customers','create')
-  const canCreateJobCard = useCan('jobcards','create')
-  const canCreateExpense = useCan('expenses','create')
-  const canViewInventory = useCan('inventory','view')
 
   return (
     <div className="space-y-6">
@@ -161,7 +169,7 @@ export default function Dashboard() {
 
       {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {stats.map((s) => (
+        {visibleStats.map((s) => (
           <div key={s.label} className="card-3d rounded-2xl p-4">
             <div className="flex items-center justify-between">
               <div className="text-2xl">{s.icon}</div>
@@ -175,6 +183,7 @@ export default function Dashboard() {
 
       {/* Orders + Stock */}
       <div className="grid gap-4 lg:grid-cols-3">
+        <PermissionGate module="orders" action="view">
         <div className="glass rounded-2xl border border-white/10 p-6 lg:col-span-2 min-h-[220px]">
           <div className="flex items-center justify-between">
             <div className="text-white/90 font-medium">Recent Orders</div>
@@ -190,13 +199,14 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        </PermissionGate>
+        <PermissionGate module="inventory" action="view">
         <div className="glass rounded-2xl border border-white/10 p-6 min-h-[220px]">
           <div className="text-white/90 font-medium">Low Stock Alerts</div>
           <p className="text-sm text-slate-400 mt-1">All fabrics are well stocked</p>
-          {canViewInventory && (
-            <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">View Inventory</button>
-          )}
+          <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">View Inventory</button>
         </div>
+        </PermissionGate>
       </div>
 
       {/* Quick + Activity */}
