@@ -27,7 +27,12 @@ export default function ContactSection({ data, onUpdate }) {
 
       <div className="pt-2">
         <div className="text-white/90 font-medium mb-2">Operating Hours</div>
-        <OperatingHoursSection value={v.operating_hours || {}} onChange={(oh) => onUpdate({ operating_hours: oh })} />
+        <OperatingHoursSection
+          value={v.operating_hours || {}}
+          settings={v.operating_hours_settings || {}}
+          onChange={(oh) => onUpdate({ operating_hours: oh })}
+          onSettingsChange={(s) => onUpdate({ operating_hours_settings: s })}
+        />
       </div>
 
       <div className="pt-2">

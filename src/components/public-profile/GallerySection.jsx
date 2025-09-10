@@ -92,6 +92,9 @@ export default function GallerySection({ businessId, value = { images: [], video
     onChange?.({ ...value, videos: vids })
   }
 
+  const controls = value.controls || {}
+  const setControls = (patch) => onChange?.({ ...value, controls: { ...controls, ...patch } })
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -159,6 +162,43 @@ export default function GallerySection({ businessId, value = { images: [], video
           </select>
         </label>
       </div>
+
+      { (value.display_style || 'grid') === 'carousel' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={!!controls.show_arrows} onChange={(e)=> setControls({ show_arrows: e.target.checked })} />
+            <span className="text-sm text-white/80">Show arrows</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={!!controls.show_dots} onChange={(e)=> setControls({ show_dots: e.target.checked })} />
+            <span className="text-sm text-white/80">Show dots</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={!!controls.autoplay} onChange={(e)=> setControls({ autoplay: e.target.checked })} />
+            <span className="text-sm text-white/80">Autoplay</span>
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm text-white/80">Autoplay interval (ms)</span>
+            <input type="number" min="1000" max="30000" value={Number(controls.autoplay_interval_ms ?? 3500)} onChange={(e)=> setControls({ autoplay_interval_ms: Number(e.target.value) })} className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white" />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm text-white/80">Items per view</span>
+            <input type="number" min="1" max="4" value={Number(controls.items_per_view ?? 1)} onChange={(e)=> setControls({ items_per_view: Math.max(1, Math.min(4, Number(e.target.value))) })} className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white" />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm text-white/80">Slide height (px)</span>
+            <input type="number" min="160" max="800" value={Number(controls.slide_height_px ?? 224)} onChange={(e)=> setControls({ slide_height_px: Math.max(160, Math.min(800, Number(e.target.value))) })} className="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white" />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm text-white/80">Arrows color</span>
+            <input type="color" value={controls.arrows_color || '#ffffff'} onChange={(e)=> setControls({ arrows_color: e.target.value })} className="h-9 w-16 rounded bg-transparent" />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm text-white/80">Dots color</span>
+            <input type="color" value={controls.dots_color || '#93c5fd'} onChange={(e)=> setControls({ dots_color: e.target.value })} className="h-9 w-16 rounded bg-transparent" />
+          </label>
+        </div>
+      )}
     </div>
   )
 }

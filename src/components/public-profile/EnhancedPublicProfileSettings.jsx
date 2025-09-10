@@ -53,6 +53,16 @@ const defaultSettings = {
     images: [],
     videos: [],
     display_style: "grid",
+    controls: {
+      show_arrows: true,
+      show_dots: true,
+      arrows_color: "#ffffff",
+      dots_color: "#93c5fd",
+      autoplay: true,
+      autoplay_interval_ms: 3500,
+      items_per_view: 1,
+      slide_height_px: 224,
+    },
   },
   social_media: {
     instagram: "",
@@ -62,7 +72,15 @@ const defaultSettings = {
     youtube: "",
     tiktok: "",
   },
+  locations: [],
+  locations_settings: {
+    layout: 'list', // list | grid | badges
+  },
   operating_hours: {},
+  operating_hours_settings: {
+    layout: "list", // list | grid | badges
+    time_format: "24", // "24" or "12"
+  },
   contact_form_enabled: true,
   custom_url: "",
   theme_settings: {
@@ -98,8 +116,8 @@ const defaultSettings = {
     },
     mobile: { header_font_size: "medium", body_font_size: "medium", button_size: "md", section_spacing: "md", image_size: "md" },
     sections: {
-      order: ["header", "contact", "services", "gallery", "operating_hours", "contact_form", "social", "footer"],
-      visibility: { header: true, contact: true, services: true, gallery: true, operating_hours: true, contact_form: true, social: true, testimonials: false, faqs: false, footer: true },
+      order: ["header", "contact", "services", "gallery", "locations", "operating_hours", "contact_form", "social", "footer"],
+      visibility: { header: true, contact: true, services: true, gallery: true, locations: true, operating_hours: true, contact_form: true, social: true, footer: true },
       spacing: "lg",
     },
   },
@@ -191,7 +209,7 @@ export default function EnhancedPublicProfileSettings() {
         let merged = deepMerge(defaultSettings, biz?.public_profile_settings || {})
         // Normalize sections order to guarantee presence of all known sections
         try {
-          const ALL = ["header","contact","services","gallery","operating_hours","contact_form","social","footer"]
+          const ALL = ["header","contact","services","gallery","locations","operating_hours","contact_form","social","footer"]
           const cur = merged?.theme_settings?.sections?.order || []
           const uniq = Array.from(new Set(cur.filter(Boolean)))
           const augmented = [...uniq, ...ALL.filter(s => !uniq.includes(s))]
@@ -199,7 +217,7 @@ export default function EnhancedPublicProfileSettings() {
           merged.theme_settings.sections = merged.theme_settings.sections || {}
           merged.theme_settings.sections.order = augmented
           merged.theme_settings.sections.visibility = {
-            header: true, contact: true, services: true, gallery: true, operating_hours: true, contact_form: true, social: true, footer: true,
+            header: true, contact: true, services: true, gallery: true, locations: true, operating_hours: true, contact_form: true, social: true, footer: true,
             ...(merged.theme_settings.sections.visibility || {})
           }
         } catch {}
@@ -428,11 +446,90 @@ function BasicInfoTab({ data, onUpdate, logoUrl }) {
           <div className="text-xs text-slate-400">Upload your logo in Settings → Business. Changes appear here in real time.</div>
         </div>
       </div>
-      <LabeledInput label="Phone" value={data.phone || ''} onChange={(e) => onUpdate({ phone: e.target.value })} placeholder="" />
-      <LabeledInput label="Email" value={data.email || ''} onChange={(e) => onUpdate({ email: e.target.value })} placeholder="" />
+      <LabeledInput label="Phone" value={data.phone || ''} onChange={(e) => onUpdate({ phone: e.target.value })} placeholder="e.g. +966…" />
+      <LabeledInput label="Email" value={data.email || ''} onChange={(e) => onUpdate({ email: e.target.value })} placeholder="hello@example.com" />
       <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <LabeledTextarea label="Business Story (EN)" value={data.business_story || ''} onChange={(e) => onUpdate({ business_story: e.target.value })} />
-        <LabeledTextarea dir="rtl" label="Business Story (AR)" value={data.business_story_ar || ''} onChange={(e) => onUpdate({ business_story_ar: e.target.value })} />
+        <LabeledTextarea label="Business Story (EN)" value={data.business_story || ''} onChange={(e)=> onUpdate({ business_story: e.target.value })} />
+        <LabeledTextarea dir="rtl" label="Business Story (AR)" value={data.business_story_ar || ''} onChange={(e)=> onUpdate({ business_story_ar: e.target.value })} />
+      </div>
+      {/* Locations (multiple branches) */}
+      <div className="md:col-span-2">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <span className="text-white/90 font-medium">Store Locations</span>
+            <label className="inline-flex items-center gap-2 text-xs">
+              <span className="text-slate-300">Layout</span>
+              <select
+                value={data.locations_settings?.layout || 'list'}
+                onChange={(e)=> onUpdate({ locations_settings: { ...(data.locations_settings||{}), layout: e.target.value } })}
+                className="rounded bg-white/10 border border-white/10 text-slate-200 px-2 py-1"
+              >
+                <option value="list">List</option>
+                <option value="grid">Grid</option>
+                <option value="badges">Badges</option>
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const list = Array.isArray(data.locations) ? [...data.locations] : []
+              list.push({ id: crypto.randomUUID(), name: '', maps_url: '' })
+              onUpdate({ locations: list })
+            }}
+            className="px-3 py-1.5 rounded-lg border border-white/15 hover:bg-white/10"
+          >Add Location</button>
+        </div>
+        <div className="space-y-2">
+          {(!data.locations || data.locations.length === 0) && (
+            <div className="text-slate-400 text-sm">No locations yet. Click "Add Location" to add your first branch.</div>
+          )}
+          {(data.locations || []).map((loc, idx) => (
+            <div key={loc.id || idx} className="grid grid-cols-1 md:grid-cols-6 gap-2 rounded-xl border border-white/10 p-3 bg-white/5">
+              <div className="md:col-span-2">
+                <label className="block space-y-1.5">
+                  <span className="text-sm text-white/80">Location Name</span>
+                  <input
+                    value={loc.name || ''}
+                    onChange={(e) => {
+                      const list = [...(data.locations || [])]
+                      list[idx] = { ...list[idx], name: e.target.value }
+                      onUpdate({ locations: list })
+                    }}
+                    placeholder="Main Branch, Mall Branch, …"
+                    className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40"
+                  />
+                </label>
+              </div>
+              <div className="md:col-span-3">
+                <label className="block space-y-1.5">
+                  <span className="text-sm text-white/80">Google Maps Link</span>
+                  <input
+                    value={loc.maps_url || ''}
+                    onChange={(e) => {
+                      const list = [...(data.locations || [])]
+                      list[idx] = { ...list[idx], maps_url: e.target.value }
+                      onUpdate({ locations: list })
+                    }}
+                    placeholder="https://maps.google.com/?q=…"
+                    className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40"
+                  />
+                </label>
+              </div>
+              <div className="flex items-end justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const list = [...(data.locations || [])]
+                    list.splice(idx, 1)
+                    onUpdate({ locations: list })
+                  }}
+                  className="text-rose-300 hover:text-rose-200 text-sm"
+                >Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

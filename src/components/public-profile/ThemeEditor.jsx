@@ -10,7 +10,7 @@ const DEFAULTS = {
   font_family: 'Inter, system-ui, Arial, sans-serif',
   header_font_size: 'large',
   body_font_size: 'medium',
-  sections: { order: ['header','services','gallery','contact','operating_hours','contact_form','social','footer'], spacing: 'lg', visibility: { header: true, services: true, gallery: true, contact: true, operating_hours: true, contact_form: true, social: true, footer: true } },
+  sections: { order: ['header','services','gallery','contact','locations','operating_hours','contact_form','social','footer'], spacing: 'lg', visibility: { header: true, services: true, gallery: true, contact: true, locations: true, operating_hours: true, contact_form: true, social: true, footer: true } },
   header: { background_color: '#0b1220', text_alignment: 'left', padding: '1rem', logo_size: '56px', sticky: true },
   footer: { background_color: '#0b1220', text_color: '#e5e7eb', text_alignment: 'center', padding: '1rem', show_social: true },
 }
@@ -98,7 +98,19 @@ export default function ThemeEditor({ value, onChange }) {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <LabeledInput type="color" label="Header BG" value={eff.header.background_color} onChange={(e)=> upNested('header', { background_color: e.target.value })} />
           <LabeledSelect label="Text Align" value={eff.header.text_alignment} onChange={(e)=> upNested('header', { text_alignment: e.target.value })} options={["left","center","right"]} />
-          <LabeledInput label="Padding" value={eff.header.padding} onChange={(e)=> upNested('header', { padding: e.target.value })} placeholder="1rem" />
+          <LabeledSelect label="Padding" value={eff.header.padding}
+            onChange={(e)=> upNested('header', { padding: e.target.value })}
+            options={[
+              '0',
+              '0.25rem',
+              '0.5rem',
+              '0.75rem',
+              '1rem',
+              '1.5rem',
+              '2rem',
+              '3rem',
+            ]}
+          />
           <LabeledRange label={`Logo Size (${parseInt(eff.header.logo_size||'56')||56}px)`} min={24} max={128} step={2} value={parseInt(eff.header.logo_size||'56')||56} onChange={(val)=> upNested('header', { logo_size: `${val}px` })} />
         </div>
         <div className="mt-3 flex items-center gap-3">
@@ -113,7 +125,7 @@ export default function ThemeEditor({ value, onChange }) {
           <LabeledSelect label="Spacing" value={eff.sections.spacing} onChange={(e) => up({ sections: { ...(eff.sections||{}), spacing: e.target.value } })} options={['sm','md','lg','xl']} />
         </div>
         <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2 text-sm text-white/80">
-          {['header','services','gallery','contact','operating_hours','contact_form','social','footer'].map(k => {
+          {['header','services','gallery','contact','locations','operating_hours','contact_form','social','footer'].map(k => {
             const locked = (k === 'header' || k === 'footer')
             const checked = locked ? true : !!eff.sections.visibility?.[k]
             const onToggle = (e) => { if (locked) return; up({ sections: { ...(eff.sections||{}), visibility: { ...(eff.sections.visibility||{}), [k]: e.target.checked } } }) }
@@ -192,7 +204,7 @@ function LabeledRange({ label, min = 0, max = 100, step = 1, value = 0, onChange
 
 function DraggableOrder({ value = [], onChange }) {
   // Minimal HTML5 drag reorder for a small fixed set of items
-  const ALL = ['header','contact','services','gallery','operating_hours','contact_form','social','footer']
+  const ALL = ['header','contact','services','gallery','locations','operating_hours','contact_form','social','footer']
   const base = Array.isArray(value) ? value.filter(Boolean) : []
   let items = [...base, ...ALL.filter(s => !base.includes(s))]
   // Enforce header at first and footer at last in the displayed list
