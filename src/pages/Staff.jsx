@@ -12,7 +12,10 @@ export default function Staff() {
   const [businessName, setBusinessName] = useState("")
   const [userIsOwner, setUserIsOwner] = useState(false)
   const [members, setMembers] = useState([])
+  const [staffRows, setStaffRows] = useState([]) // rows from staff table for this business
   const [onlineIds, setOnlineIds] = useState(new Set()) // users_app.id values currently online
+  const [activeMap, setActiveMap] = useState(new Map()) // staff_id -> active shift row
+  const [tick, setTick] = useState(0)
   const [invited, setInvited] = useState([])
   const [activeTab, setActiveTab] = useState("members") // members | codes | payroll
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -49,6 +52,38 @@ export default function Staff() {
   // helper: normalize email for comparisons
   const normEmail = (e) => (e || "").trim().toLowerCase()
 
+  // helper: get staff id for member
+  function getStaffIdForMember(m) {
+    const em = (m.email || '').trim().toLowerCase()
+    if (!em) return null
+    const found = staffRows.find(s => (s.email || '').trim().toLowerCase() === em)
+    return found?.id || null
+  }
+  // Back-compat alias (some views may still reference the old helper name)
+  const getStaffIdOfMember = getStaffIdForMember
+
+  // Format seconds -> HH:MM:SS
+  function fmtHMS(sec){
+    const s = Math.max(0, Math.floor(sec||0))
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`
+  }
+  // Back-compat alias
+  const formatHMS = fmtHMS
+
+  // Compute worked timer and break timer for an active time_tracking row
+  function computeTimers(activeRow){
+    if (!activeRow?.started_at) return { worked: 0, onBreak: false, breakNow: 0 }
+    const now = Date.now()
+    const start = new Date(activeRow.started_at).getTime()
+    const raw = Math.max(0, Math.floor((now - start)/1000))
+    const onBreak = !!activeRow.break_start && !activeRow.break_end
+    const breakAcc = Math.max(0, (activeRow.break_minutes||0) * 60)
+    const breakNow = onBreak ? Math.max(0, Math.floor((now - new Date(activeRow.break_start).getTime())/1000)) : 0
+    const worked = Math.max(0, raw - breakAcc - (onBreak ? breakNow : 0))
+    return { worked, onBreak, breakNow }
+  }
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -80,11 +115,19 @@ export default function Staff() {
         } catch {}
         // load members for the same business
         await loadMembers(me.business_id)
+        await loadStaffRows(me.business_id)
+        await loadActiveToday(me.business_id)
       } finally {
         if (!cancelled) setLoading(false)
       }
     })()
     return () => { cancelled = true }
+  }, [])
+
+  // live ticker for timers
+  useEffect(() => {
+    const t = setInterval(() => setTick((n)=>n+1), 1000)
+    return () => clearInterval(t)
   }, [])
 
   useEffect(() => {
@@ -351,6 +394,37 @@ export default function Staff() {
     }
   }
 
+  // Fetch all staff rows for this business so we can map users_app.email -> staff.id
+  async function loadStaffRows(bizId) {
+    if (!bizId) return
+    try {
+      const { data, error } = await supabase
+        .from('staff')
+        .select('id, business_id, email, name, user_id')
+        .eq('business_id', bizId)
+      if (!error) setStaffRows(data || [])
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // Load today's active time_tracking rows and build a map staff_id -> active shift row
+  async function loadActiveToday(bizId) {
+    if (!bizId) return
+    try {
+      const start = new Date(); start.setHours(0,0,0,0)
+      const { data, error } = await supabase
+        .from('time_tracking')
+        .select('id, staff_id, started_at, ended_at, break_start, break_end, break_minutes, location, status')
+        .eq('business_id', bizId)
+        .eq('status', 'active')
+        .is('ended_at', null)
+        .gte('started_at', start.toISOString())
+      if (error) return
+      const m = new Map()
+      ;(data || []).forEach((r) => { if (r.staff_id) m.set(r.staff_id, r) })
+      setActiveMap(m)
+    } catch (_) { /* non-fatal */ }
+  }
+
   // moved out of useEffect: needed by onCreated and tab click
   async function loadInvited(bizId) {
     if (!bizId) return
@@ -502,6 +576,9 @@ export default function Staff() {
             )}
             {members.map((m) => {
               const name = displayName(m)
+              const sid = getStaffIdForMember(m)
+              const activeRow = sid ? activeMap.get(sid) : null
+              const timers = computeTimers(activeRow)
               return (
                 <div key={m.id} className="rounded-2xl border border-transparent bg-white/5 p-4 glow">
                   <div className="flex items-center justify-between">
@@ -517,13 +594,29 @@ export default function Staff() {
                         )}
                       </div>
                     </div>
-                    <div className="text-[10px] text-slate-400">Joined {m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</div>
+                    <div className="text-right">
+                      <div className="text-[10px] text-slate-400">Joined {m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</div>
+                      {/* Attendance inline: if active show timers */}
+                      {activeRow && (
+                        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-300">
+                          <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono">{fmtHMS(timers.worked)}</span>
+                          {timers.onBreak ? (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 font-mono">Break {fmtHMS(timers.breakNow)}</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">On the clock</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-4 space-y-2 text-sm text-slate-300">
                     <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10 overflow-hidden truncate">{m.email || '—'}</div>
                     <div className="px-3 py-2 rounded-md bg-white/5 border border-white/10 overflow-hidden truncate flex items-center gap-1">
                       <span className={`h-2 w-2 rounded-full ${onlineIds.has(m.id) ? 'bg-emerald-400' : 'bg-slate-500'}`}></span>
                       <span className="text-xs">{onlineIds.has(m.id) ? 'Online' : 'Offline'}</span>
+                      {activeRow && (
+                        <span className="ml-2 text-[11px] text-slate-400">Started: {new Date(activeRow.started_at).toLocaleTimeString()}</span>
+                      )}
                     </div>
                   </div>
                   <div className="mt-4 flex items-center gap-2">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { NavLink, Outlet, Navigate } from "react-router-dom"
+import { NavLink, Outlet, Navigate, useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 import 'driver.js/dist/driver.css'
 import { PermissionProvider } from "../lib/permissions.jsx"
@@ -37,10 +37,12 @@ function SideLink({ to, label, icon, collapsed }) {
 }
 
 export default function BoLayout() {
+  const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [session, setSession] = useState(null)
   const [isOwner, setIsOwner] = useState(false)
+  const [roleChecked, setRoleChecked] = useState(false)
   const [userName, setUserName] = useState("")
   const [avatarUrl, setAvatarUrl] = useState("")
   const [signingOut, setSigningOut] = useState(false)
@@ -120,6 +122,7 @@ export default function BoLayout() {
             }
           } catch {}
         }
+        setRoleChecked(true)
       } catch {}
     })()
   }, [session])
@@ -193,7 +196,11 @@ export default function BoLayout() {
   if (!session) return <Navigate to="/auth" replace />
   if (!approved) return <Navigate to="/pending-approval" replace />
   if (!setupDone) return <Navigate to="/bo/setup" replace />
-  // No fallback redirect here (traffic cop removed). Render BO layout as requested.
+  // Guard: redirect staff to staff dashboard and ensure URL changes
+  if (roleChecked && !isOwner) {
+    try { navigate('/staff/dashboard', { replace: true }) } catch {}
+    return null
+  }
 
   return (
     <PermissionProvider owner={true}>

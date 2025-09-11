@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabaseClient.js"
 import { useCan, PermissionGate } from "../lib/permissions.jsx"
+import QuickAttendance from "../components/attendance/QuickAttendance.jsx"
 
 export default function Dashboard() {
   // Live clock for date/time in the business banner
@@ -13,6 +14,8 @@ export default function Dashboard() {
   const [staffId, setStaffId] = useState("")
   const [employmentCode, setEmploymentCode] = useState("")
   const [logoUrl, setLogoUrl] = useState("")
+  // Attendance widget IDs
+  const [attIds, setAttIds] = useState({ business_id: null, staff_id: null, staff_name: "" })
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
@@ -53,6 +56,15 @@ export default function Dashboard() {
             // RLS may block; we already show ID from users_app
             console.debug("Dashboard: business fetch issue", bErr)
           }
+          // Setup Attendance widget IDs (auth user id + business id)
+          try {
+            const { data: sess } = await supabase.auth.getSession()
+            const authUser = sess?.session?.user
+            if (authUser && user.business_id && !cancelled) {
+              // Initialize with business and name; leave staff_id to be set when staff row is found
+              setAttIds({ business_id: user.business_id, staff_id: null, staff_name: user.staff_name || user.full_name || authUser.email || "Staff" })
+            }
+          } catch {}
           // If this is a staff account, fetch their staff.id to show in header
           if (!user.is_business_owner) {
             try {
@@ -88,6 +100,8 @@ export default function Dashboard() {
               }
               if (!cancelled && srow?.id) {
                 setStaffId(srow.id)
+                // Update Attendance IDs with real staff_id from staff table
+                setAttIds((prev) => ({ ...prev, staff_id: srow.id }))
                 try {
                   const m = /StaffID\s*:\s*([^\n]+)/i.exec(srow.notes || '')
                   if (m && m[1]) setEmploymentCode(m[1].trim())
@@ -152,13 +166,23 @@ export default function Dashboard() {
             />
           ) : null}
           <span className="hidden sm:inline text-white/90 font-medium mr-1">{businessName ? `Welcome ${businessName} to INCH` : 'Welcome to INCH'}</span>
-          <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">{dateStr}</span>
-          <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
+          <div className="flex flex-col gap-1">
+            <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">{dateStr}</span>
+            <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
+          </div>
         </div>
+        {/* Inline Attendance widget (compact) placed before owner section */}
+        {!userRow?.is_business_owner && (
+          <div className="ml-3 min-w-[320px]">
+            <QuickAttendance ids={attIds} />
+          </div>
+        )}
         {/* Owner (kept at the far right) */}
-        <div className="ml-auto text-xs text-slate-300 flex items-center gap-2">
-          <span>{ownerName || "—"}</span>
-          <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span>
+        <div className="ml-auto text-xs text-slate-300 flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <span>{ownerName || "—"}</span>
+            <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span>
+          </div>
           {!userRow?.is_business_owner && employmentCode && (
             <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono" title={`StaffID: ${employmentCode}`}>
               StaffID: {employmentCode}

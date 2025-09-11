@@ -41,6 +41,12 @@ export default function Settings() {
   const [businessNotice, setBusinessNotice] = useState("")
   const [savingBusiness, setSavingBusiness] = useState(false)
 
+  // Attendance & Shift Rules (persisted in user_settings.attendance_settings)
+  const [attStdDay, setAttStdDay] = useState(480) // minutes
+  const [attMaxBreaks, setAttMaxBreaks] = useState(1)
+  const [attBreakMins, setAttBreakMins] = useState(15)
+  const [attNotice, setAttNotice] = useState("")
+
   // User settings tab state
   const [userDisplayName, setUserDisplayName] = useState("")
   const [userLang, setUserLang] = useState("en")
@@ -107,6 +113,30 @@ export default function Settings() {
         localStorage.removeItem(getLsKey('themeCustom'))
       }
     } catch {/* ignore */}
+  }
+
+  async function saveAttendance() {
+    if (!userRow?.id) return
+    try {
+      setAttNotice("")
+      const payload = {
+        standard_day_minutes: Math.max(1, Number(attStdDay) || 480),
+        max_breaks_per_day: Math.max(0, Number(attMaxBreaks) || 0),
+        break_minutes_per_break: Math.max(0, Number(attBreakMins) || 0),
+      }
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert(
+          { user_id: userRow.id, attendance_settings: payload },
+          { onConflict: 'user_id' }
+        )
+      if (error) throw error
+      setAttNotice('Attendance rules saved ✓')
+      setTimeout(()=>setAttNotice(''), 2500)
+    } catch (e) {
+      setAttNotice(e?.message || 'Failed to save attendance settings')
+      setTimeout(()=>setAttNotice(''), 3000)
+    }
   }
 
   // Local storage key helper to ensure per-user scoping (avoid global bleed between users)
@@ -281,6 +311,11 @@ export default function Settings() {
           const profile = settings.user_profile || {}
           if (profile.language) setUserLang(profile.language)
           if (profile.avatar_url) setAvatarUrl(`${profile.avatar_url}?v=${Date.now()}`)
+          // Hydrate attendance settings
+          const as = settings.attendance_settings || {}
+          if (Number.isFinite(as.standard_day_minutes)) setAttStdDay(as.standard_day_minutes)
+          if (Number.isFinite(as.max_breaks_per_day)) setAttMaxBreaks(as.max_breaks_per_day)
+          if (Number.isFinite(as.break_minutes_per_break)) setAttBreakMins(as.break_minutes_per_break)
         } else {
           // Ensure settings row exists via secured RPC (self-only)
           await supabase.rpc('api_user_settings_ensure')
@@ -842,6 +877,30 @@ export default function Settings() {
         </div>
         <div className="mt-6 flex justify-end">
           <button id="settings-save-business" onClick={saveBusiness} disabled={savingBusiness || loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingBusiness ? 'Saving…' : 'Save Business Info'}</button>
+        </div>
+
+        {/* Attendance & Shift Rules */}
+        <div className="mt-6">
+          <h3 className="text-white/90 font-medium">Attendance & Shift Rules</h3>
+          <p className="text-sm text-slate-400 mt-1">Define standard shift length and break policy. These values are enforced by the app where supported.</p>
+          <div className="mt-3 grid sm:grid-cols-3 gap-3">
+            <div>
+              <div className="text-[11px] text-slate-400 mb-1">Standard shift length (minutes)</div>
+              <input type="number" value={attStdDay} onChange={(e)=>setAttStdDay(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-400 mb-1">Max breaks per day</div>
+              <input type="number" value={attMaxBreaks} onChange={(e)=>setAttMaxBreaks(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-400 mb-1">Minutes per break</div>
+              <input type="number" value={attBreakMins} onChange={(e)=>setAttBreakMins(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button onClick={saveAttendance} className="px-3 py-2 rounded-md text-sm pill-active glow">Save Attendance Rules</button>
+            {attNotice && <div className="text-xs text-amber-300">{attNotice}</div>}
+          </div>
         </div>
       </section>
       )}

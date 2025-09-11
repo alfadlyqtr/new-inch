@@ -16,18 +16,37 @@ export default function PunchInGate({ children }) {
         const { data: sess } = await supabase.auth.getSession()
         const authUser = sess?.session?.user
         if (!authUser) { setLoading(false); return }
-        // Resolve users_app -> business_id
+        // Resolve users_app -> business_id, then staff.id for this user
         const { data: ua } = await supabase
           .from('users_app')
-          .select('id,business_id,full_name')
+          .select('id,business_id,full_name,email')
           .eq('auth_user_id', authUser.id)
           .maybeSingle()
         if (!ua?.business_id) { setLoading(false); return }
-        const base = { business_id: ua.business_id, staff_id: authUser.id, staff_name: ua.full_name || authUser.email || 'Staff' }
+        let staffRow = null
+        // Try map by user_id (preferred)
+        const byUser = await supabase
+          .from('staff')
+          .select('id, name')
+          .eq('business_id', ua.business_id)
+          .eq('user_id', ua.id)
+          .maybeSingle()
+        staffRow = byUser.data || null
+        // Fallback by email
+        if (!staffRow && ua.email) {
+          const byEmail = await supabase
+            .from('staff')
+            .select('id, name')
+            .eq('business_id', ua.business_id)
+            .ilike('email', ua.email)
+            .maybeSingle()
+          staffRow = byEmail.data || null
+        }
+        const base = { business_id: ua.business_id, staff_id: staffRow?.id || null, staff_name: ua.full_name || staffRow?.name || authUser.email || 'Staff' }
         if (!mounted) return
         setIds(base)
         try {
-          const row = await AttendanceApi.getActive({ business_id: base.business_id, staff_id: base.staff_id })
+          const row = base.staff_id ? await AttendanceApi.getActive({ business_id: base.business_id, staff_id: base.staff_id }) : null
           if (!mounted) return
           setActive(row || null)
         } catch {
@@ -52,9 +71,6 @@ export default function PunchInGate({ children }) {
       )}
       <div className={gated ? 'opacity-75 pointer-events-none select-none' : ''}>
         {children}
-      </div>
-      <div className="mt-3">
-        <QuickAttendance ids={ids} active={active} onStatus={setActive} />
       </div>
     </div>
   )

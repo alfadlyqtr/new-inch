@@ -1,5 +1,5 @@
 import React from "react"
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom"
 import BoLayout from "./layouts/BoLayout.jsx"
 import StaffLayout from "./layouts/StaffLayout.jsx"
 import AdminLayout from "./layouts/AdminLayout.jsx"
@@ -50,6 +50,32 @@ function NotFound() {
 
 // Traffic cop removed per request: keep simple, no role-based guards here.
 
+function SmartDashboardRedirect() {
+  const navigate = useNavigate()
+  React.useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        const authUser = sessionData?.session?.user
+        if (!authUser) { navigate('/auth', { replace: true }); return }
+        const { data: ua } = await supabase
+          .from('users_app')
+          .select('is_business_owner')
+          .eq('auth_user_id', authUser.id)
+          .maybeSingle()
+        if (!mounted) return
+        if (ua?.is_business_owner) navigate('/bo/dashboard', { replace: true })
+        else navigate('/staff/dashboard', { replace: true })
+      } catch {
+        navigate('/auth', { replace: true })
+      }
+    })()
+    return () => { mounted = false }
+  }, [navigate])
+  return null
+}
+
 function App() {
   return (
     <AppearanceProvider>
@@ -58,8 +84,8 @@ function App() {
         {/* Public home at "/" */}
         <Route path="/" element={<Home />} />
         {/* No traffic cop; /app not used */}
-        {/* Back-compat: /dashboard should open BO dashboard */}
-        <Route path="/dashboard" element={<Navigate to="/bo/dashboard" replace />} />
+        {/* Role-aware redirect to appropriate dashboard */}
+        <Route path="/dashboard" element={<SmartDashboardRedirect />} />
         {/* Admin auth (standalone, no layout) */}
         <Route path="/mqtr" element={<AdminAuth />} />
         {/* User auth (standalone, no layout) */}
@@ -70,7 +96,7 @@ function App() {
         <Route path="/bo/setup" element={<BoSetup />} />
         <Route path="/staff/setup" element={<StaffSetup />} />
         <Route path="/bo" element={<BoLayout />}>
-          <Route path="dashboard" element={<PunchInGate><Dashboard /></PunchInGate>} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="admindash" element={<AdminDash />} />
           <Route path="customers" element={<Customers />} />
           <Route path="orders" element={<Orders />} />

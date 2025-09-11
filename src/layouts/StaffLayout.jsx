@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { NavLink, Outlet, Navigate } from "react-router-dom"
+import { NavLink, Outlet, Navigate, useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 import { PermissionProvider } from "../lib/permissions.jsx"
 import { normalizeModuleKey } from "../lib/permissions-config.js"
@@ -39,6 +39,7 @@ function SideLink({ to, label, icon, collapsed }) {
 }
 
 export default function StaffLayout() {
+  const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [session, setSession] = useState(null)
@@ -53,6 +54,7 @@ export default function StaffLayout() {
   const [approved, setApproved] = useState(true)
   const [setupDone, setSetupDone] = useState(true)
   const [isOwner, setIsOwner] = useState(false)
+  const [roleChecked, setRoleChecked] = useState(false)
   const { updateAppearance } = useAppearance()
 
   useEffect(() => {
@@ -171,6 +173,7 @@ export default function StaffLayout() {
           permRow = permByStaffOnly || null
         }
         setPerms(ensureCompletePermissions(permRow?.permissions || {}))
+        setRoleChecked(true)
       } catch {}
     })()
   }, [session])
@@ -232,7 +235,7 @@ export default function StaffLayout() {
   if (!session) return <Navigate to="/auth" replace />
   if (!approved) return <Navigate to="/pending-approval" replace />
   if (!setupDone) return <Navigate to="/staff/setup" replace />
-  if (isOwner) return <Navigate to="/bo/dashboard" replace />
+  if (roleChecked && isOwner) { try { navigate('/bo/dashboard', { replace: true }) } catch {}; return null }
 
   async function handleSignOut() {
     try {

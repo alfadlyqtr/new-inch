@@ -22,6 +22,110 @@ export default function StaffDetails({
     targets: `${staff?.targets?.monthly ?? "-"}/${staff?.targets?.quarterly ?? "-"}/${staff?.targets?.yearly ?? "-"}`,
   }
 
+  // Attendance: active shift and recent activity
+  const [active, setActive] = useState(null)
+  const [recent, setRecent] = useState(null)
+  const [loginLoc, setLoginLoc] = useState(null)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    let mount = true
+    ;(async () => {
+      try {
+        if (!staff?.id || !staff?.business_id) { setActive(null); setRecent(null); return }
+        // Active shift for today
+        const start = new Date(); start.setHours(0,0,0,0)
+        const { data: rows } = await supabase
+          .from('time_tracking')
+          .select('id, started_at, ended_at, break_start, break_end, break_minutes, status, location')
+          .eq('business_id', staff.business_id)
+          .eq('staff_id', staff.id)
+          .gte('started_at', start.toISOString())
+          .order('started_at', { ascending: false })
+          .limit(1)
+        if (mount) setActive(rows?.[0] || null)
+        // Recent activity log
+        const { data: acts } = await supabase
+          .from('staff_activity')
+          .select('id, kind, meta, created_at')
+          .eq('staff_id', staff.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+        if (mount) setRecent(acts?.[0] || null)
+
+        // Fallback for login location: look up today's activities and pick the latest with meta.location
+        try {
+          const { data: todayActs } = await supabase
+            .from('staff_activity')
+            .select('id, kind, meta, created_at')
+            .eq('staff_id', staff.id)
+            .gte('created_at', start.toISOString())
+            .order('created_at', { ascending: false })
+            .limit(25)
+          const found = (todayActs || []).find(a => {
+            const m = a?.meta
+            const loc = m?.location || m?.loc
+            return !!loc
+          })
+          if (mount && found?.meta?.location) setLoginLoc(found.meta.location)
+          else if (mount && found?.meta?.loc) setLoginLoc(found.meta.loc)
+        } catch {}
+      } catch (_) {
+        if (mount) { setActive(null); setRecent(null) }
+      }
+    })()
+    return () => { mount = false }
+  }, [staff?.id, staff?.business_id])
+
+  // Listen for local broadcast and use localStorage fallback for login location
+  useEffect(() => {
+    if (!staff?.id || !staff?.business_id) return
+    const ymd = new Date().toISOString().slice(0,10)
+    const key = `loginloc:${staff.business_id}:${staff.id}:${ymd}`
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw) setLoginLoc(JSON.parse(raw))
+    } catch {}
+    const onEvt = (e) => {
+      try {
+        const d = e?.detail || {}
+        if (d.business_id === staff.business_id && d.staff_id === staff.id) {
+          setLoginLoc(d.location || null)
+        }
+      } catch {}
+    }
+    window.addEventListener('attendance-login-location', onEvt)
+    document.addEventListener('attendance-login-location', onEvt)
+    return () => {
+      window.removeEventListener('attendance-login-location', onEvt)
+      document.removeEventListener('attendance-login-location', onEvt)
+    }
+  }, [staff?.id, staff?.business_id])
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((n)=>n+1), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  const timers = useMemo(() => {
+    if (!active?.started_at) return { worked: 0, onBreak: false, breakNow: 0 }
+    const now = Date.now()
+    const start = new Date(active.started_at).getTime()
+    const raw = Math.max(0, Math.floor((now - start)/1000))
+    const onBreak = !!active.break_start && !active.break_end
+    const breakAcc = Math.max(0, (active.break_minutes||0) * 60)
+    const breakNow = onBreak ? Math.max(0, Math.floor((now - new Date(active.break_start).getTime())/1000)) : 0
+    const worked = Math.max(0, raw - breakAcc - (onBreak ? breakNow : 0))
+    return { worked, onBreak, breakNow }
+  }, [active, tick])
+
+  // Local formatter to avoid missing symbol issues
+  const hms = (sec) => {
+    const s = Math.max(0, Math.floor(sec||0))
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`
+  }
+
 function PermissionGridView({ permissions }) {
   const actions = ["view", "create", "edit", "delete"]
   const val = permissions || {}
@@ -366,6 +470,30 @@ function DocPreview({ doc }) {
         <KPI title="Worked (Qtr)" value={kpi.worked} />
         <KPI title="Status" value={kpi.status} accent={kpi.status === 'Active' ? 'emerald' : 'red'} />
       </div>
+
+      {/* Attendance Panel */}
+      <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+        <div className="text-white/90 text-sm font-medium mb-2">Attendance</div>
+        {active ? (
+          <div className="flex items-center flex-wrap gap-2 text-xs text-slate-300">
+            <span className="px-2 py-1 rounded bg-white/10 border border-white/10 font-mono">{hms(timers.worked)}</span>
+            {timers.onBreak ? (
+              <span className="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 font-mono">Break {hms(timers.breakNow)}</span>
+            ) : (
+              <span className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">On the clock</span>
+            )}
+            <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Started: {new Date(active.started_at).toLocaleString()}</span>
+            {(active?.location || loginLoc) && (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Login Location: {renderLocation(active?.location || loginLoc)}</span>
+            )}
+            {recent && (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Last: {recent.kind} @ {new Date(recent.created_at).toLocaleTimeString()}</span>
+            )}
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400">No active shift today.</div>
+        )}
+      </div>
       {/* Tabs */}
       <div className="flex items-center gap-2 text-xs border-b border-white/10">
         {TABS.map(t => (
@@ -532,4 +660,22 @@ function formatCurrency(n) {
   const num = Number(n)
   if (!Number.isFinite(num)) return String(n)
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'QAR', maximumFractionDigits: 0 }).format(num)
+}
+
+function renderLocation(loc) {
+  try {
+    const v = typeof loc === 'string' ? JSON.parse(loc) : (loc || {})
+    const parts = []
+    if (v.where) parts.push(v.where)
+    if (v.city) parts.push(v.city)
+    if (v.country) parts.push(v.country)
+    if (v.ip) parts.push(`IP ${v.ip}`)
+    if (v.tz) parts.push(v.tz)
+    if (v.platform) parts.push(v.platform)
+    if (v.screen) parts.push(v.screen)
+    if (v.user_agent) parts.push(v.user_agent)
+    return parts.join(' • ') || '—'
+  } catch {
+    return '—'
+  }
 }
