@@ -15,35 +15,45 @@ export default function StaffDetails({
   const navigate = useNavigate()
   const name = user?.owner_name || user?.full_name || user?.staff_name || staff?.name || user?.email || "—"
   const role = staff?.role || (user?.is_business_owner ? "owner" : (user?.role || "staff"))
+  const [monthTotal, setMonthTotal] = useState(0) // seconds worked this month
   const kpi = {
     joined: staff?.joining_date || (user?.created_at ? new Date(user.created_at).toLocaleDateString() : "—"),
-    worked: staff?.worked || "—", // placeholder: minutes/hours not implemented
+    worked: monthTotal, // will be formatted later
     status: staff?.is_active === false ? "Inactive" : "Active",
     targets: `${staff?.targets?.monthly ?? "-"}/${staff?.targets?.quarterly ?? "-"}/${staff?.targets?.yearly ?? "-"}`,
   }
 
   // Attendance: active shift and recent activity
   const [active, setActive] = useState(null)
+  const [todayRows, setTodayRows] = useState([])
   const [recent, setRecent] = useState(null)
   const [loginLoc, setLoginLoc] = useState(null)
   const [tick, setTick] = useState(0)
+  // Today's breaks reconstructed from staff_activity events
+  const [breaksToday, setBreaksToday] = useState([])
+  // Attendance policy (from BO)
+  const [policy, setPolicy] = useState({ standard_day_minutes: 480, max_breaks_per_day: 1, break_minutes_per_break: 15 })
+  const standardSeconds = useMemo(() => Math.max(0, (Number(policy?.standard_day_minutes) || 480) * 60), [policy])
 
   useEffect(() => {
     let mount = true
     ;(async () => {
       try {
         if (!staff?.id || !staff?.business_id) { setActive(null); setRecent(null); return }
-        // Active shift for today
+        // Today rows + active shift
         const start = new Date(); start.setHours(0,0,0,0)
-        const { data: rows } = await supabase
+        const { data: allRows } = await supabase
           .from('time_tracking')
           .select('id, started_at, ended_at, break_start, break_end, break_minutes, status, location')
           .eq('business_id', staff.business_id)
           .eq('staff_id', staff.id)
           .gte('started_at', start.toISOString())
-          .order('started_at', { ascending: false })
-          .limit(1)
-        if (mount) setActive(rows?.[0] || null)
+          .order('started_at', { ascending: true })
+        if (mount) {
+          setTodayRows(Array.isArray(allRows) ? allRows : [])
+          const latest = (allRows || []).slice(-1)[0] || null
+          setActive(latest)
+        }
         // Recent activity log
         const { data: acts } = await supabase
           .from('staff_activity')
@@ -53,7 +63,56 @@ export default function StaffDetails({
           .limit(1)
         if (mount) setRecent(acts?.[0] || null)
 
-        // Fallback for login location: look up today's activities and pick the latest with meta.location
+        // Load BO attendance policy for this business (standard_day_minutes)
+        try {
+          const { data: owner } = await supabase
+            .from('users_app')
+            .select('id')
+            .eq('business_id', staff.business_id)
+            .eq('is_business_owner', true)
+            .limit(1)
+            .maybeSingle()
+          const ownerId = owner?.id || null
+          if (ownerId) {
+            const { data: us } = await supabase
+              .from('user_settings')
+              .select('attendance_settings')
+              .eq('user_id', ownerId)
+              .maybeSingle()
+            const a = us?.attendance_settings || {}
+            setPolicy({
+              standard_day_minutes: Number.isFinite(a.standard_day_minutes) ? a.standard_day_minutes : 480,
+              max_breaks_per_day: Number.isFinite(a.max_breaks_per_day) ? a.max_breaks_per_day : 1,
+              break_minutes_per_break: Number.isFinite(a.break_minutes_per_break) ? a.break_minutes_per_break : 15,
+            })
+          }
+        } catch {}
+
+        // Monthly total worked time (from first day of month to now)
+        try {
+          const ms = new Date(); ms.setDate(1); ms.setHours(0,0,0,0)
+          const me = new Date(ms); me.setMonth(ms.getMonth()+1)
+          const { data: monthRows } = await supabase
+            .from('time_tracking')
+            .select('started_at, ended_at, break_minutes')
+            .eq('business_id', staff.business_id)
+            .eq('staff_id', staff.id)
+            .gte('started_at', ms.toISOString())
+            .lt('started_at', me.toISOString())
+            .order('started_at', { ascending: true })
+          let total = 0
+          const nowTs = Date.now()
+          for (const r of (monthRows || [])) {
+            const s = new Date(r.started_at).getTime()
+            const e = r.ended_at ? new Date(r.ended_at).getTime() : nowTs
+            const raw = Math.max(0, Math.floor((e - s)/1000))
+            const breakAcc = Math.max(0, (r.break_minutes || 0) * 60)
+            total += Math.max(0, raw - breakAcc)
+          }
+          if (mount) setMonthTotal(total)
+        } catch {}
+
+        // Build today's break sessions and login location (fallback)
         try {
           const { data: todayActs } = await supabase
             .from('staff_activity')
@@ -62,13 +121,35 @@ export default function StaffDetails({
             .gte('created_at', start.toISOString())
             .order('created_at', { ascending: false })
             .limit(25)
-          const found = (todayActs || []).find(a => {
-            const m = a?.meta
-            const loc = m?.location || m?.loc
-            return !!loc
-          })
+          const found = (todayActs || []).find(a => (a?.meta?.location || a?.meta?.loc))
           if (mount && found?.meta?.location) setLoginLoc(found.meta.location)
           else if (mount && found?.meta?.loc) setLoginLoc(found.meta.loc)
+
+          // Build today's break sessions from events
+          try {
+            const events = (todayActs || []).filter(a => a.kind === 'break_start' || a.kind === 'break_end').sort((a,b)=> new Date(a.created_at) - new Date(b.created_at))
+            const sessions = []
+            let current = null
+            for (const ev of events) {
+              if (ev.kind === 'break_start') {
+                if (!current) current = { start: new Date(ev.created_at) }
+                // if overlapping starts, ignore
+              } else if (ev.kind === 'break_end') {
+                if (current && !current.end) {
+                  current.end = new Date(ev.created_at)
+                  sessions.push(current)
+                  current = null
+                }
+              }
+            }
+            // If a break is ongoing, include it with open end (use now)
+            if (current && !current.end) {
+              current.end = new Date()
+              current.open = true
+              sessions.push(current)
+            }
+            if (mount) setBreaksToday(sessions)
+          } catch {}
         } catch {}
       } catch (_) {
         if (mount) { setActive(null); setRecent(null) }
@@ -108,16 +189,61 @@ export default function StaffDetails({
   }, [])
 
   const timers = useMemo(() => {
-    if (!active?.started_at) return { worked: 0, onBreak: false, breakNow: 0 }
-    const now = Date.now()
-    const start = new Date(active.started_at).getTime()
-    const raw = Math.max(0, Math.floor((now - start)/1000))
-    const onBreak = !!active.break_start && !active.break_end
-    const breakAcc = Math.max(0, (active.break_minutes||0) * 60)
-    const breakNow = onBreak ? Math.max(0, Math.floor((now - new Date(active.break_start).getTime())/1000)) : 0
-    const worked = Math.max(0, raw - breakAcc - (onBreak ? breakNow : 0))
-    return { worked, onBreak, breakNow }
-  }, [active, tick])
+    // Sum all rows for today to compute accurate total day worked
+    if (!Array.isArray(todayRows) || todayRows.length === 0) return { worked: 0, onBreak: false, breakNow: 0, ended: !!active?.ended_at }
+    let total = 0
+    let onBreak = false
+    let breakNow = 0
+    const nowTs = Date.now()
+    for (const r of todayRows) {
+      const s = new Date(r.started_at).getTime()
+      const e = r.ended_at ? new Date(r.ended_at).getTime() : nowTs
+      const raw = Math.max(0, Math.floor((e - s)/1000))
+      const acc = Math.max(0, (r.break_minutes || 0) * 60)
+      const openBreak = !r.ended_at && r.break_start && !r.break_end
+      const openBreakNow = openBreak ? Math.max(0, Math.floor((nowTs - new Date(r.break_start).getTime())/1000)) : 0
+      total += Math.max(0, raw - acc - openBreakNow)
+      if (openBreak) { onBreak = true; breakNow = openBreakNow }
+    }
+    const latestEnded = !!(active?.ended_at)
+    return { worked: total, onBreak, breakNow, ended: latestEnded }
+  }, [todayRows, active, tick])
+
+  const shiftCompleted = useMemo(() => !!active && timers.worked >= standardSeconds && standardSeconds > 0, [active, timers.worked, standardSeconds])
+  const overtimeSeconds = useMemo(() => shiftCompleted ? Math.max(0, timers.worked - standardSeconds) : 0, [shiftCompleted, timers.worked, standardSeconds])
+  const breaksSummary = useMemo(() => {
+    if (!Array.isArray(breaksToday) || breaksToday.length === 0) return { count: 0, total: 0 }
+    let total = 0
+    for (const s of breaksToday) {
+      const dur = Math.max(0, Math.floor(((s.end?.getTime?.()||0) - (s.start?.getTime?.()||0))/1000))
+      total += dur
+    }
+    return { count: breaksToday.length, total }
+  }, [breaksToday])
+
+  // Past attendance state (must be declared before use in pastDaily)
+  const [pastRows, setPastRows] = useState([])
+  const [loadingPast, setLoadingPast] = useState(false)
+
+  // Past attendance grouped per day (last 30 days)
+  const pastDaily = useMemo(() => {
+    if (!Array.isArray(pastRows) || pastRows.length === 0) return []
+    const by = {}
+    for (const r of pastRows) {
+      const start = new Date(r.started_at)
+      const ymd = start.toISOString().slice(0,10)
+      const endTs = r.ended_at ? new Date(r.ended_at).getTime() : Date.now()
+      const raw = Math.max(0, Math.floor((endTs - start.getTime())/1000))
+      const breaks = Math.max(0, (r.break_minutes || 0) * 60)
+      const worked = Math.max(0, raw - breaks)
+      const cur = by[ymd] || { date: ymd, worked: 0, breaks: 0 }
+      cur.worked += worked
+      cur.breaks += breaks
+      by[ymd] = cur
+    }
+    const days = Object.values(by).sort((a,b)=> (a.date < b.date ? 1 : -1))
+    return days.map(d => ({ ...d, ot: Math.max(0, d.worked - standardSeconds) }))
+  }, [pastRows, standardSeconds])
 
   // Local formatter to avoid missing symbol issues
   const hms = (sec) => {
@@ -285,6 +411,7 @@ function DocPreview({ doc }) {
     { key: 'emergency', label: 'Emergency' },
     { key: 'notes', label: 'Notes & Permissions' },
     { key: 'files', label: 'Files' },
+    { key: 'past', label: 'Past Attendance' },
   ]
   const [tab, setTab] = useState('basic')
   const [editing, setEditing] = useState(false)
@@ -346,6 +473,28 @@ function DocPreview({ doc }) {
       await reloadPermissions()
     })()
   }, [staff?.id, staff?.business_id])
+
+  useEffect(() => {
+    if (tab !== 'past') return
+    ;(async () => {
+      try {
+        setLoadingPast(true)
+        if (!staff?.id || !staff?.business_id) { setPastRows([]); return }
+        const now = new Date()
+        const from = new Date(now)
+        from.setDate(now.getDate() - 30)
+        const { data } = await supabase
+          .from('time_tracking')
+          .select('id, started_at, ended_at, break_minutes')
+          .eq('business_id', staff.business_id)
+          .eq('staff_id', staff.id)
+          .gte('started_at', from.toISOString())
+          .lte('started_at', now.toISOString())
+          .order('started_at', { ascending: false })
+        setPastRows(Array.isArray(data) ? data : [])
+      } finally { setLoadingPast(false) }
+    })()
+  }, [tab, staff?.id, staff?.business_id])
 
   async function reloadPermissions() {
     try {
@@ -467,7 +616,7 @@ function DocPreview({ doc }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <KPI title="Joined" value={kpi.joined} />
         <KPI title="Targets (M/Q/Y)" value={kpi.targets} />
-        <KPI title="Worked (Qtr)" value={kpi.worked} />
+        <KPI title="Worked (Month)" value={hms(kpi.worked)} />
         <KPI title="Status" value={kpi.status} accent={kpi.status === 'Active' ? 'emerald' : 'red'} />
       </div>
 
@@ -476,18 +625,40 @@ function DocPreview({ doc }) {
         <div className="text-white/90 text-sm font-medium mb-2">Attendance</div>
         {active ? (
           <div className="flex items-center flex-wrap gap-2 text-xs text-slate-300">
-            <span className="px-2 py-1 rounded bg-white/10 border border-white/10 font-mono">{hms(timers.worked)}</span>
-            {timers.onBreak ? (
-              <span className="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 font-mono">Break {hms(timers.breakNow)}</span>
+            <span className="px-2 py-1 rounded bg-white/10 border border-white/10 font-mono" title="Total worked today">Worked: {hms(timers.worked)}</span>
+            {timers.ended ? (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10 text-slate-200">Punched out</span>
             ) : (
-              <span className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">On the clock</span>
+              timers.onBreak ? (
+                <span className="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 font-mono">Break {hms(timers.breakNow)}</span>
+              ) : (
+                <span className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">On the clock</span>
+              )
             )}
             <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Started: {new Date(active.started_at).toLocaleString()}</span>
-            {(active?.location || loginLoc) && (
-              <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Login Location: {renderLocation(active?.location || loginLoc)}</span>
+            {timers.ended && (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Ended: {new Date(active.ended_at).toLocaleString()}</span>
             )}
+            {/* Login location intentionally hidden per request */}
             {recent && (
               <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Last: {recent.kind} @ {new Date(recent.created_at).toLocaleTimeString()}</span>
+            )}
+            {/* BO insights */}
+            <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Breaks today: {breaksSummary.count}</span>
+            <span className="px-2 py-1 rounded bg-white/10 border border-white/10">Total break: {hms(breaksSummary.total)}</span>
+            {breaksToday.length > 0 && (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10">
+                {breaksToday.map((s, i) => (
+                  <span key={i} className="mr-2 whitespace-nowrap">{s.start.toLocaleTimeString()} → {s.open ? '—' : s.end.toLocaleTimeString()}</span>
+                ))}
+              </span>
+            )}
+            {shiftCompleted ? (
+              <span className={`px-2 py-1 rounded border bg-fuchsia-500/10 border-fuchsia-400/30 text-fuchsia-200`} title="Overtime today">
+                Overtime: {hms(overtimeSeconds)}
+              </span>
+            ) : (
+              <span className="px-2 py-1 rounded bg-white/10 border border-white/10" title="Business standard shift length">Standard: {Math.round(standardSeconds/3600)}h</span>
             )}
           </div>
         ) : (
@@ -609,6 +780,50 @@ function DocPreview({ doc }) {
                 <DocPreview key={d.id || d.file_url} doc={d} />
               ))}
             </div>
+          </Section>
+        )}
+
+        {tab === 'past' && (
+          <Section title="Past Attendance (Last 30 Days)">
+            {loadingPast ? (
+              <div className="text-xs text-slate-400">Loading…</div>
+            ) : (
+              <div className="sm:col-span-2">
+                {pastDaily.length === 0 ? (
+                  <div className="text-xs text-slate-400">No records in the last 30 days.</div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="bg-white/5">
+                          <th className="px-3 py-2">Date</th>
+                          <th className="px-3 py-2">Worked (Day)</th>
+                          <th className="px-3 py-2">Breaks (Day)</th>
+                          <th className="px-3 py-2">OT (Day)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pastDaily.map(d => {
+                          const fmt = (s) => {
+                            const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60
+                            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`
+                          }
+                          const dt = new Date(d.date + 'T00:00:00')
+                          return (
+                            <tr key={d.date} className="border-t border-white/10">
+                              <td className="px-3 py-2">{dt.toLocaleDateString()}</td>
+                              <td className="px-3 py-2 font-mono">{fmt(d.worked)}</td>
+                              <td className="px-3 py-2 font-mono">{fmt(d.breaks)}</td>
+                              <td className={`px-3 py-2 font-mono ${d.ot>0 ? 'text-fuchsia-200' : ''}`}>{fmt(d.ot)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </Section>
         )}
       </div>

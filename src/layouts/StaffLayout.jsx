@@ -131,20 +131,61 @@ export default function StaffLayout() {
         // Resolve staff row: try user_id -> email (do NOT filter by auth_user_id; staff.auth_user_id does not exist)
         let { data: srow } = await supabase
           .from('staff')
-          .select('id, business_id, email')
+          .select('id, business_id, email, name')
           .eq('user_id', userAppId)
           .maybeSingle()
         if (!srow && user?.email) {
+          // Fallback 1: any staff row with case-insensitive email
           const { data: fallbackByEmail } = await supabase
             .from('staff')
-            .select('id, business_id, email')
-            .eq('email', user.email)
+            .select('id, business_id, email, name')
+            .ilike('email', user.email)
             .maybeSingle()
           srow = fallbackByEmail || null
         }
-        if (!srow) return
+        if (!srow && app?.business_id && user?.email) {
+          // Fallback 2: scoped to business_id + case-insensitive email
+          const { data: scopedByBiz } = await supabase
+            .from('staff')
+            .select('id, business_id, email, name')
+            .eq('business_id', app.business_id)
+            .ilike('email', user.email)
+            .maybeSingle()
+          srow = scopedByBiz || null
+        }
+        if (!srow) {
+          // As a last resort, try to create a minimal staff profile for this user under the resolved business
+          if (app?.business_id && user?.email) {
+            try {
+              const payload = {
+                business_id: app.business_id,
+                email: user.email,
+                name: userName || user.email.split('@')[0],
+                role: 'staff',
+                invitation_status: 'active',
+                user_id: userAppId,
+              }
+              const { data: created, error: createErr } = await supabase
+                .from('staff')
+                .insert(payload)
+                .select('id, business_id, email, name')
+                .single()
+              if (!createErr && created) {
+                srow = created
+              }
+            } catch {}
+          }
+          if (!srow) return
+        }
         setStaffId(srow.id)
         setBusinessId(srow.business_id)
+        // Broadcast staff context for interested components (e.g., StaffDashboard header)
+        try {
+          const detail = { business_id: srow.business_id, staff_id: srow.id, staff_email: srow.email || user.email || null, staff_name: srow.name || userName || (user.email ? user.email.split('@')[0] : 'Staff') }
+          window.dispatchEvent(new CustomEvent('staff-context', { detail }))
+          document.dispatchEvent(new CustomEvent('staff-context', { detail }))
+          try { const bc = new BroadcastChannel('app_events'); bc.postMessage({ type: 'staff-context', detail }); bc.close() } catch {}
+        } catch {}
         // Try 1: business_id + staff_id
         let { data: permRow } = await supabase
           .from('staff_permissions')

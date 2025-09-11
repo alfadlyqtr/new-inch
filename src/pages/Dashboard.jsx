@@ -166,7 +166,7 @@ export default function Dashboard() {
             />
           ) : null}
           <span className="hidden sm:inline text-white/90 font-medium mr-1">{businessName ? `Welcome ${businessName} to INCH` : 'Welcome to INCH'}</span>
-          <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">{dateStr}</span>
             <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
           </div>

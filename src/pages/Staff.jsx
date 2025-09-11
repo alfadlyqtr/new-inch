@@ -39,6 +39,12 @@ export default function Staff() {
   const [genSubmitting, setGenSubmitting] = useState(false)
   const [deletingCodeId, setDeletingCodeId] = useState(null)
 
+  // Attendance & Shift Rules (Business Owner only)
+  const [attStdDay, setAttStdDay] = useState(480) // minutes
+  const [attMaxBreaks, setAttMaxBreaks] = useState(1)
+  const [attBreakMins, setAttBreakMins] = useState(15)
+  const [attNotice, setAttNotice] = useState("")
+
   // invite form state
   const [inviteName, setInviteName] = useState("")
   const [inviteEmail, setInviteEmail] = useState("")
@@ -123,6 +129,28 @@ export default function Staff() {
     })()
     return () => { cancelled = true }
   }, [])
+
+  // Load Attendance & Shift Rules for the current user (owner) from user_settings
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        if (!userRow?.id) return
+        const { data: settings } = await supabase
+          .from('user_settings')
+          .select('attendance_settings')
+          .eq('user_id', userRow.id)
+          .maybeSingle()
+        if (cancelled || !settings) return
+        const as = settings.attendance_settings || {}
+        // Convert minutes to hours for display (stays in minutes in state)
+        if (Number.isFinite(as.standard_day_minutes)) setAttStdDay(as.standard_day_minutes)
+        if (Number.isFinite(as.max_breaks_per_day)) setAttMaxBreaks(as.max_breaks_per_day)
+        if (Number.isFinite(as.break_minutes_per_break)) setAttBreakMins(as.break_minutes_per_break)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [userRow?.id])
 
   // live ticker for timers
   useEffect(() => {
@@ -375,6 +403,28 @@ export default function Staff() {
     try { await navigator.clipboard.writeText(text); } catch {}
   }
 
+  // Save Attendance & Shift Rules (persist into user_settings.attendance_settings)
+  async function saveAttendanceRules() {
+    if (!userRow?.id) return
+    try {
+      setAttNotice('')
+      const payload = {
+        standard_day_minutes: Math.max(60, Number(attStdDay) || 480), // Ensure minimum 1 hour (60 minutes)
+        max_breaks_per_day: Math.max(0, Number(attMaxBreaks) || 0),
+        break_minutes_per_break: Math.max(0, Number(attBreakMins) || 0),
+      }
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert({ user_id: userRow.id, attendance_settings: payload }, { onConflict: 'user_id' })
+      if (error) throw error
+      setAttNotice('Attendance rules saved ✓')
+      setTimeout(() => setAttNotice(''), 2500)
+    } catch (e) {
+      setAttNotice(e?.message || 'Failed to save attendance settings')
+      setTimeout(() => setAttNotice(''), 3000)
+    }
+  }
+
 
   async function loadMembers(bizId) {
     if (!bizId) return
@@ -566,6 +616,9 @@ export default function Staff() {
           <button onClick={()=>{ setActiveTab('invited'); loadInvited(businessId) }} className={`px-3 py-1.5 rounded-md border ${activeTab==='invited' ? 'pill-active glow border-transparent' : 'border-white/10 text-white/80 hover:bg-white/10'}`}>Invited</button>
           <button onClick={()=>setActiveTab("codes")} className={`px-3 py-1.5 rounded-md border ${activeTab==='codes' ? 'pill-active glow border-transparent' : 'border-white/10 text-white/80 hover:bg-white/10'}`}>Business Codes</button>
           <button onClick={()=>setActiveTab("payroll")} className={`px-3 py-1.5 rounded-md border ${activeTab==='payroll' ? 'pill-active glow border-transparent' : 'border-white/10 text-white/80 hover:bg-white/10'}`}>Payroll</button>
+          {userIsOwner && (
+            <button onClick={()=>setActiveTab("attendance")} className={`px-3 py-1.5 rounded-md border ${activeTab==='attendance' ? 'pill-active glow border-transparent' : 'border-white/10 text-white/80 hover:bg-white/10'}`}>Attendance & Shift Rules</button>
+          )}
         </div>
 
         {/* Tab content */}
@@ -727,6 +780,52 @@ export default function Staff() {
 
         {activeTab === 'payroll' && (
           <div className="mt-6 text-sm text-slate-300">Payroll overview placeholder (e.g., hours, rates, payouts). Coming soon.</div>
+        )}
+
+        {activeTab === 'attendance' && userIsOwner && (
+          <div className="mt-6">
+            <div className="text-white/90 font-medium">Attendance & Shift Rules</div>
+            <p className="text-xs text-slate-400 mt-1">Define standard shift length and break policy. These values are enforced by the app where supported.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">Standard shift length (hours)</div>
+                <input
+                  type="number"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={Math.round(attStdDay / 60 * 10) / 10}
+                  onChange={(e)=>{
+                    const hours = parseFloat(e.target.value);
+                    setAttStdDay(Math.round(hours * 60) || 480);
+                  }}
+                  step="0.5"
+                  min="1"
+                  max="24"
+                />
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">Max breaks per day</div>
+                <input
+                  type="number"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={attMaxBreaks}
+                  onChange={(e)=>setAttMaxBreaks(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">Minutes per break</div>
+                <input
+                  type="number"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={attBreakMins}
+                  onChange={(e)=>setAttBreakMins(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button onClick={saveAttendanceRules} className="px-3 py-2 rounded-md text-sm pill-active glow">Save Attendance Rules</button>
+              {attNotice && <span className="text-xs text-slate-300">{attNotice}</span>}
+            </div>
+          </div>
         )}
       </div>
 

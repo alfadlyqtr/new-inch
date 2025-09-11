@@ -37,6 +37,7 @@ import { supabase } from "./lib/supabaseClient.js"
 import { AppearanceProvider } from "./contexts/AppearanceContext"
 import PunchInGate from "./components/attendance/PunchInGate.jsx"
 import TimeTrackingSystem from "./pages/staff/TimeTrackingSystem.jsx"
+import StaffDashboard from "./pages/staff/StaffDashboard.jsx"
 import PayrollManagement from "./pages/staff/PayrollManagement.jsx"
 
 function NotFound() {
@@ -111,7 +112,7 @@ function App() {
           <Route path="settings" element={<Settings />} />
         </Route>
         <Route path="/staff" element={<StaffLayout />}>
-          <Route path="dashboard" element={<PunchInGate><Dashboard /></PunchInGate>} />
+          <Route path="dashboard" element={<PunchInGate><StaffDashboard /></PunchInGate>} />
           <Route path="customers" element={<Customers />} />
           <Route path="orders" element={<Orders />} />
           <Route path="job-cards" element={<JobCards />} />
