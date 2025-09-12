@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient.js"
 import StaffForm from "./staff/StaffForm.jsx"
 import { ensureCompletePermissions, ORDERED_MODULES } from "./staff/staff-permissions-defaults.js"
 import StaffDetails from './staff/StaffDetails.jsx'
+import PayrollManagement from './staff/PayrollManagement.jsx'
 
 export default function Staff() {
   const [loading, setLoading] = useState(true)
@@ -310,6 +311,92 @@ export default function Staff() {
       console.error('loadCodes error', e)
     } finally {
       setCodesLoading(false)
+    }
+  }
+
+  function makeCode() {
+    const part = (n) => Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g,'').slice(2, 2 + n)
+    const biz = (businessName || 'BIZ')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 16) || 'BIZ'
+    return `INCH-${biz}-${part(4)}${part(4)}`
+  }
+
+  async function handleGenerateCode() {
+    if (!businessId || !userRow?.id) { setGenNotice('Missing business or user'); return }
+    const maxUses = Math.max(1, Number(genMaxUses) || 1)
+    const hours = Math.max(1, Number(genHours) || 12)
+    const code = makeCode()
+    const expiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString()
+    setGenSubmitting(true)
+    setGenNotice('')
+    try {
+      // Attempt 1: call without p_created_by (server derives from auth.uid())
+      let rpcError = null
+      {
+        const { error } = await supabase.rpc('api_business_code_create', {
+          p_code: code,
+          p_business_id: businessId,
+          p_email: genEmail?.trim() || null,
+          p_expires_at: expiresAt,
+          p_max_uses: maxUses,
+        })
+        rpcError = error
+      }
+
+      // If RPC failed due to function signature mismatch, retry with p_created_by
+      const isSignatureErr = (err) => {
+        const m = err?.message || err?.error_description || ''
+        return /No function match|PGRST202|function .* does not exist|could not find the function/i.test(m)
+      }
+
+      if (rpcError && isSignatureErr(rpcError)) {
+        const { error: retryErr } = await supabase.rpc('api_business_code_create', {
+          p_code: code,
+          p_business_id: businessId,
+          p_created_by: userRow.id,
+          p_email: genEmail?.trim() || null,
+          p_expires_at: expiresAt,
+          p_max_uses: maxUses,
+        })
+        rpcError = retryErr
+      }
+
+      if (rpcError) {
+        throw rpcError
+      }
+
+      setGenNotice(`Code generated: ${code}`)
+      await loadCodes(businessId)
+      setTimeout(() => { setGenNotice(''); setGenOpen(false) }, 900)
+    } catch (e) {
+      console.error('handleGenerateCode error', e)
+      const msg = e?.message || e?.error_description || (typeof e === 'object' ? JSON.stringify(e) : String(e))
+      setGenNotice(`Failed to generate code: ${msg}`)
+    } finally {
+      setGenSubmitting(false)
+    }
+  }
+
+  async function handleDeleteCode(id) {
+    if (!id) return
+    setDeletingCodeId(id)
+    // optimistic UI
+    setCodes((prev) => prev.filter(c => c.id !== id))
+    try {
+      const { error } = await supabase.rpc('api_business_code_delete', { p_code_id: id })
+      if (error) throw error
+      // ensure state reflects server
+      await loadCodes(businessId)
+    } catch (e) {
+      console.error('delete code failed', e)
+      alert('Failed to delete code')
+      // rollback by reloading
+      await loadCodes(businessId)
+    } finally {
+      setDeletingCodeId(null)
     }
   }
 
@@ -779,7 +866,9 @@ export default function Staff() {
         )}
 
         {activeTab === 'payroll' && (
-          <div className="mt-6 text-sm text-slate-300">Payroll overview placeholder (e.g., hours, rates, payouts). Coming soon.</div>
+          <div className="mt-6">
+            <PayrollManagement />
+          </div>
         )}
 
         {activeTab === 'attendance' && userIsOwner && (
