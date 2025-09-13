@@ -33,6 +33,7 @@ function SideLink({ to, label, icon }) {
 
 export default function AdminLayout() {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [session, setSession] = useState(null)
   const [signingOut, setSigningOut] = useState(false)
@@ -90,8 +91,20 @@ export default function AdminLayout() {
   }
   return (
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
+      {/* Mobile overlay backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className={`${collapsed ? "w-16" : "w-64"} relative sticky top-6 h-[88vh] overflow-y-auto px-2 mx-3`}>
+      <aside className={`${
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      } fixed md:relative inset-y-0 left-0 z-40 transition-transform duration-300 ease-in-out ${
+        collapsed ? "w-16" : "w-64"
+      } relative sticky top-6 h-[88vh] overflow-y-auto px-2 mx-3`}>
         <div className="h-full rounded-3xl p-3 bg-gradient-to-b from-brand-primary/85 to-brand-fuchsia/75 shadow-[0_20px_60px_rgba(124,58,237,0.5)] ring-1 ring-white/25">
           {/* Brand */}
           <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
@@ -123,8 +136,18 @@ export default function AdminLayout() {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="md:hidden fixed top-4 left-4 z-50 h-10 w-10 rounded-full bg-white/10 backdrop-blur flex items-center justify-center text-white hover:bg-white/20 transition"
+          aria-label="Open sidebar"
+        >
+          <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
         <header className="glass border-b border-white/10 sticky top-0 z-10">
-          <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             <h1 className="text-white/90 font-semibold">Platform Admin</h1>
             <div className="flex items-center gap-4">
               <div className="text-xs text-white/70 hidden sm:block">Shadow mode and sensitive tools are audited</div>
@@ -138,7 +161,7 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
-        <main className="max-w-7xl mx-auto p-6">
+        <main className="max-w-7xl mx-auto p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

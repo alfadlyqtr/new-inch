@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient.js"
 import { runTourOnce, tourKey } from "../lib/tour.js"
 import { useCan, Forbidden } from "../lib/permissions.jsx"
 import { useAppearance } from "../contexts/AppearanceContext"
+import { useTranslation } from 'react-i18next'
 
 // Simple inline icons
 const IconBriefcase = (props) => (
@@ -25,6 +26,7 @@ const IconUser = (props) => (
 )
 
 export default function Settings() {
+  const { t } = useTranslation()
   const canViewSettingsPerm = useCan('settings','view')
   // Backend-wired state
   const [loading, setLoading] = useState(true)
@@ -78,17 +80,17 @@ export default function Settings() {
   const canViewSettings = isStaffRoute ? true : (isOwner ? canViewSettingsPerm : true)
   if (!canViewSettings) return <Forbidden module="settings" />
   const TABS_OWNER = [
-    { id: "business", label: "Business", Icon: IconBriefcase },
-    { id: "user", label: "User Settings", Icon: IconUser },
-    { id: "invoice", label: "Invoice", Icon: IconReceipt },
-    { id: "notifications", label: "Notifications", Icon: IconBell },
-    { id: "security", label: "Security", Icon: IconShield },
-    { id: "appearance", label: "Appearance", Icon: IconSparkle },
+    { id: "business", label: t('settings.tabs.business'), Icon: IconBriefcase },
+    { id: "user", label: t('settings.tabs.user'), Icon: IconUser },
+    { id: "invoice", label: t('settings.tabs.invoice'), Icon: IconReceipt },
+    { id: "notifications", label: t('settings.tabs.notifications'), Icon: IconBell },
+    { id: "security", label: t('settings.tabs.security'), Icon: IconShield },
+    { id: "appearance", label: t('settings.tabs.appearance'), Icon: IconSparkle },
   ]
   const TABS_STAFF = [
-    { id: "user", label: "User Settings", Icon: IconUser },
-    { id: "security", label: "Security", Icon: IconShield },
-    { id: "appearance", label: "Appearance", Icon: IconSparkle },
+    { id: "user", label: t('settings.tabs.user'), Icon: IconUser },
+    { id: "security", label: t('settings.tabs.security'), Icon: IconShield },
+    { id: "appearance", label: t('settings.tabs.appearance'), Icon: IconSparkle },
   ]
   const tabs = isOwner ? TABS_OWNER : TABS_STAFF
   const [active, setActive] = useState(isOwner ? "business" : "user")
@@ -131,7 +133,7 @@ export default function Settings() {
           { onConflict: 'user_id' }
         )
       if (error) throw error
-      setAttNotice('Attendance rules saved ✓')
+      setAttNotice(t('attendance.savedNotice'))
       setTimeout(()=>setAttNotice(''), 2500)
     } catch (e) {
       setAttNotice(e?.message || 'Failed to save attendance settings')
@@ -151,32 +153,32 @@ export default function Settings() {
       {
         element: '#settings-tabs',
         popover: {
-          title: 'Settings Sections',
-          description: 'Navigate between Business, User, Invoice, and Appearance settings.',
+          title: t('tour.settingsSections'),
+          description: t('tour.settingsDescription'),
           side: 'bottom',
         },
       },
       {
         element: '#settings-business-logo',
         popover: {
-          title: 'Business Logo',
-          description: 'Upload your business logo. Owners only.',
+          title: t('tour.businessLogo'),
+          description: t('tour.businessLogoDescription'),
           side: 'right',
         },
       },
       {
         element: '#settings-save-business',
         popover: {
-          title: 'Save Business Info',
-          description: 'Persist changes like owner name, phone, and address.',
+          title: t('tour.saveBusinessInfo'),
+          description: t('tour.saveBusinessInfoDescription'),
           side: 'top',
         },
       },
       {
         element: '#settings-appearance-tab',
         popover: {
-          title: 'Appearance',
-          description: 'Customize theme, gradient angle, and glow to match your brand.',
+          title: t('tour.appearance'),
+          description: t('tour.appearanceDescription'),
           side: 'bottom',
         },
       },
@@ -427,7 +429,7 @@ export default function Settings() {
           }
         }
       } catch {}
-      setBusinessNotice("Business info saved ✓")
+      setBusinessNotice(t('business.savedNotice'))
       setTimeout(() => setBusinessNotice("") , 2500)
       try {
         const detail = { name: newName || ownerNameInput }
@@ -467,7 +469,7 @@ export default function Settings() {
           document.documentElement.setAttribute('lang', userLang)
         }
       } catch { /* ignore */ }
-      setUserNotice("Saved user settings ✓")
+      setUserNotice(t('userSettings.savedNotice'))
       setTimeout(() => setUserNotice("") , 2500)
     } catch (e) {
       console.error("saveUserProfile failed", e)
@@ -513,7 +515,7 @@ export default function Settings() {
           try { window.__setSidebarAvatar?.(freshUrl) } catch {}
         } catch {}
       } catch { /* ignore */ }
-      setUserNotice("Avatar uploaded ✓")
+      setUserNotice(t('userSettings.uploadAvatarSuccess'))
       setTimeout(() => setUserNotice("") , 2000)
     } catch (e) {
       console.error("Avatar upload failed", e)
@@ -532,7 +534,7 @@ export default function Settings() {
       setChangingEmail(true)
       const { error } = await supabase.auth.updateUser({ email: newEmail })
       if (error) throw error
-      setUserNotice("Email update initiated. Check your inbox to confirm.")
+      setUserNotice(t('userSettings.emailUpdateInitiated'))
       setTimeout(() => setUserNotice("") , 4000)
     } catch (e) {
       alert(e.message || "Failed to update email")
@@ -550,7 +552,7 @@ export default function Settings() {
       if (error) throw error
       setNewPassword("")
       setConfirmPassword("")
-      setUserNotice("Password changed ✓")
+      setUserNotice(t('userSettings.passwordChanged'))
       setTimeout(() => setUserNotice("") , 2500)
     } catch (e) {
       alert(e.message || "Failed to change password")
@@ -591,7 +593,7 @@ export default function Settings() {
       // Show immediately (even if DB update later fails) and broadcast
       const fresh = `${publicUrl}?v=${Date.now()}`
       setLogoUrl(fresh)
-      setBusinessNotice("Logo saved ✓ (pending sync)")
+      setBusinessNotice(t('business.logoSaved'))
       setTimeout(() => setBusinessNotice("") , 1500)
       try {
         const detail = { url: fresh }
@@ -695,10 +697,10 @@ export default function Settings() {
             { onConflict: 'user_id' }
           )
         if (error) throw error
-        setAppearanceNotice('Saved to your account')
+        setAppearanceNotice(t('appearance.savedNotice'))
       } catch (e) {
         console.error('Error saving appearance:', e)
-        setAppearanceNotice('Failed to save: ' + (e.message || 'Unknown error'))
+        setAppearanceNotice(t('appearance.saveFailed'))
       } finally {
         setSavingAppearance(false)
         setTimeout(() => setAppearanceNotice(''), 3000)
@@ -777,9 +779,9 @@ export default function Settings() {
     <div className="space-y-4">
       {/* Header + Tabs */}
       <div className="glass rounded-2xl border border-white/10 p-6">
-        <h1 className="text-xl font-semibold text-white/90">Settings</h1>
-        <p className="text-sm text-slate-400 mt-1">Application & business settings.</p>
-        <div id="settings-tabs" className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Settings sections">
+        <h1 className="text-xl font-semibold text-white/90">{t('settings.title')}</h1>
+        <p className="text-sm text-slate-400 mt-1">{t('settings.subtitle')}</p>
+        <div id="settings-tabs" className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label={t('settings.sectionsAriaLabel')}>
           {tabs.map(t => (
             <button
               key={t.id}
@@ -799,19 +801,19 @@ export default function Settings() {
       {/* Business Information (owners only) */}
       {isOwner && active === "business" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="business">
-        <h2 className="text-lg font-semibold text-white/90">Business Information</h2>
-        <p className="text-sm text-slate-400 mt-1">Update your business details, contact information, and logo.</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('business.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('business.subtitle')}</p>
         {!userRow?.is_business_owner && (
-          <div className="mt-3 text-xs text-amber-300/90">Staff can view these details but cannot modify them.</div>
+          <div className="mt-3 text-xs text-amber-300/90">{t('business.staffInfo')}</div>
         )}
         {businessNotice && (<div className="mt-3 text-xs text-emerald-300/90">{businessNotice}</div>)}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business ID</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessId')}</label>
             <input className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90" value={businessId} readOnly />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business Logo</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessLogo')}</label>
             <div className="mt-2 flex items-center gap-3">
               <div className="h-12 w-12 rounded-lg bg-white/10 overflow-hidden flex items-center justify-center">
                 {logoUrl ? (
@@ -835,70 +837,70 @@ export default function Settings() {
                 disabled={uploadingLogo || loading || !userRow?.business_id || !userRow?.is_business_owner}
                 className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-60"
                 id="settings-business-logo"
-              >{uploadingLogo ? "Uploading…" : "Upload Photo"}</button>
+              >{uploadingLogo ? t('business.uploading') : t('business.uploadLogo')}</button>
             </div>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business Name</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessName')}</label>
             <input
               type="text"
               className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm cursor-not-allowed opacity-70"
-              placeholder="Your business"
+              placeholder={t('business.businessNamePlaceholder')}
               value={businessName}
               readOnly
               aria-readonly="true"
-              title="Business Name is locked after setup"
+              title={t('business.businessNameLocked')}
             />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Owner Name</label>
-            <input type="text" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder="Your name" value={ownerNameInput} onChange={(e)=>setOwnerNameInput(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.ownerName')}</label>
+            <input type="text" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder={t('business.ownerNamePlaceholder')} value={ownerNameInput} onChange={(e)=>setOwnerNameInput(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business Phone</label>
-            <input type="tel" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder="+965 …" value={businessPhone} onChange={(e)=>setBusinessPhone(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessPhone')}</label>
+            <input type="tel" className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} placeholder={t('business.businessPhonePlaceholder')} value={businessPhone} onChange={(e)=>setBusinessPhone(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business Email</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessEmail')}</label>
             <input
               type="email"
               className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm cursor-not-allowed opacity-70"
-              placeholder="you@company.com"
+              placeholder={t('business.businessEmailPlaceholder')}
               value={businessEmail}
               readOnly
               aria-readonly="true"
-              title="Business Email is locked after setup"
+              title={t('business.businessEmailLocked')}
             />
           </div>
           <div className="md:col-span-2">
-            <label className="text-xs uppercase tracking-wide text-slate-400">Business Address</label>
-            <textarea className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} rows="2" placeholder="Street, City, Country" value={businessAddress} onChange={(e)=>setBusinessAddress(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('business.businessAddress')}</label>
+            <textarea className={`mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm ${!userRow?.is_business_owner ? "opacity-60 cursor-not-allowed" : ""}`} rows="2" placeholder={t('business.businessAddressPlaceholder')} value={businessAddress} onChange={(e)=>setBusinessAddress(e.target.value)} readOnly={!userRow?.is_business_owner} aria-readonly={!userRow?.is_business_owner} />
           </div>
         </div>
         <div className="mt-6 flex justify-end">
-          <button id="settings-save-business" onClick={saveBusiness} disabled={savingBusiness || loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingBusiness ? 'Saving…' : 'Save Business Info'}</button>
+          <button id="settings-save-business" onClick={saveBusiness} disabled={savingBusiness || loading || !userRow?.business_id || !userRow?.is_business_owner} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingBusiness ? t('business.saving') : t('business.saveBusinessInfo')}</button>
         </div>
 
         {/* Attendance & Shift Rules */}
         <div className="mt-6">
-          <h3 className="text-white/90 font-medium">Attendance & Shift Rules</h3>
-          <p className="text-sm text-slate-400 mt-1">Define standard shift length and break policy. These values are enforced by the app where supported.</p>
+          <h3 className="text-white/90 font-medium">{t('attendance.title')}</h3>
+          <p className="text-sm text-slate-400 mt-1">{t('attendance.subtitle')}</p>
           <div className="mt-3 grid sm:grid-cols-3 gap-3">
             <div>
-              <div className="text-[11px] text-slate-400 mb-1">Standard shift length (minutes)</div>
+              <div className="text-[11px] text-slate-400 mb-1">{t('attendance.standardShiftLength')}</div>
               <input type="number" value={attStdDay} onChange={(e)=>setAttStdDay(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
             </div>
             <div>
-              <div className="text-[11px] text-slate-400 mb-1">Max breaks per day</div>
+              <div className="text-[11px] text-slate-400 mb-1">{t('attendance.maxBreaksPerDay')}</div>
               <input type="number" value={attMaxBreaks} onChange={(e)=>setAttMaxBreaks(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
             </div>
             <div>
-              <div className="text-[11px] text-slate-400 mb-1">Minutes per break</div>
+              <div className="text-[11px] text-slate-400 mb-1">{t('attendance.minutesPerBreak')}</div>
               <input type="number" value={attBreakMins} onChange={(e)=>setAttBreakMins(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border bg-[#0f172a] border-white/5 text-slate-300" />
             </div>
           </div>
           <div className="mt-3 flex items-center gap-2">
-            <button onClick={saveAttendance} className="px-3 py-2 rounded-md text-sm pill-active glow">Save Attendance Rules</button>
+            <button onClick={saveAttendance} className="px-3 py-2 rounded-md text-sm pill-active glow">{t('attendance.saveAttendanceRules')}</button>
             {attNotice && <div className="text-xs text-amber-300">{attNotice}</div>}
           </div>
         </div>
@@ -908,14 +910,14 @@ export default function Settings() {
       {/* User Settings (all users) */}
       {active === "user" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="user">
-        <h2 className="text-lg font-semibold text-white/90">User Settings</h2>
-        <p className="text-sm text-slate-400 mt-1">Update your personal settings for this account.</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('userSettings.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('userSettings.subtitle')}</p>
         {userNotice && (<div className="mt-3 text-xs text-emerald-300/90">{userNotice}</div>)}
         {userError && (<div className="mt-3 text-xs text-rose-300/90">{userError}</div>)}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Avatar */}
           <div className="md:col-span-2">
-            <label className="text-xs uppercase tracking-wide text-slate-400">User Avatar</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.userAvatar')}</label>
             <div className="mt-2 flex items-center gap-3">
               <div className="h-14 w-14 rounded-full bg-white/10 overflow-hidden flex items-center justify-center">
                 {avatarUrl ? (
@@ -932,43 +934,48 @@ export default function Settings() {
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAvatar(f) }}
               />
               <button onClick={() => avatarInputRef.current?.click()} disabled={uploadingAvatar || loading} className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-60">
-                {uploadingAvatar ? "Uploading…" : "Upload Avatar"}
+                {uploadingAvatar ? t('userSettings.uploading') : t('userSettings.uploadAvatar')}
               </button>
             </div>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Display Name</label>
-            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="Your name" value={userDisplayName} onChange={(e)=>setUserDisplayName(e.target.value)} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.displayName')}</label>
+            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder={t('userSettings.placeholderName')} value={userDisplayName} onChange={(e)=>setUserDisplayName(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Language</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.language')}</label>
             <select className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" value={userLang} onChange={(e)=>setUserLang(e.target.value)}>
               <option value="en">English</option>
               <option value="ar">العربية</option>
+              <option value="hi">हिन्दी</option>
+              <option value="ne">नेपाली</option>
+              <option value="tl">Tagalog</option>
+              <option value="bn">বাংলা</option>
+              <option value="ur">اردو</option>
             </select>
           </div>
           {/* Change Email */}
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Change Email</label>
-            <input type="email" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="you@example.com" value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.changeEmail')}</label>
+            <input type="email" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder={t('userSettings.placeholderEmail')} value={newEmail} onChange={(e)=>setNewEmail(e.target.value)} />
           </div>
           <div className="flex items-end">
-            <button onClick={changeEmail} disabled={changingEmail || loading || !newEmail} className="mt-2 px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{changingEmail ? "Saving…" : "Update Email"}</button>
+            <button onClick={changeEmail} disabled={changingEmail || loading || !newEmail} className="mt-2 px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{changingEmail ? t('userSettings.saving') : t('userSettings.updateEmail')}</button>
           </div>
           {/* Change Password */}
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">New Password</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.newPassword')}</label>
             <input type="password" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="••••••••" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Confirm Password</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('userSettings.confirmPassword')}</label>
             <input type="password" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="••••••••" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} />
           </div>
         </div>
         <div className="mt-6 flex justify-between gap-3 flex-wrap">
           <div className="flex gap-3">
-            <button onClick={saveUserProfile} disabled={loading || savingUserProfile || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingUserProfile ? "Saving…" : "Save User Settings"}</button>
-            <button onClick={changePassword} disabled={changingPassword || loading || !newPassword || newPassword !== confirmPassword} className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-50">{changingPassword ? "Saving…" : "Change Password"}</button>
+            <button onClick={saveUserProfile} disabled={loading || savingUserProfile || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingUserProfile ? t('userSettings.saving') : t('userSettings.saveUserSettings')}</button>
+            <button onClick={changePassword} disabled={changingPassword || loading || !newPassword || newPassword !== confirmPassword} className="px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15 disabled:opacity-50">{changingPassword ? t('userSettings.saving') : t('userSettings.changePassword')}</button>
           </div>
         </div>
       </section>
@@ -977,15 +984,15 @@ export default function Settings() {
       {/* Invoice Settings (owners only) */}
       {isOwner && active === "invoice" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="invoice">
-        <h2 className="text-lg font-semibold text-white/90">Invoice Settings</h2>
-        <p className="text-sm text-slate-400 mt-1">Configure your invoice templates and default settings.</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('invoice.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('invoice.subtitle')}</p>
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Default Tax Rate (%)</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('invoice.taxRate')}</label>
             <input type="number" min="0" step="0.01" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="0" value={taxRate} onChange={(e)=>setTaxRate(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Currency</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('invoice.currency')}</label>
             <select className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" value={currency} onChange={(e)=>setCurrency(e.target.value)}>
               <option value="KWD (د.ك) - Kuwaiti Dinar">KWD (د.ك) - Kuwaiti Dinar</option>
               <option>USD ($) - US Dollar</option>
@@ -998,19 +1005,19 @@ export default function Settings() {
           </div>
           <div className="md:col-span-2 flex items-center gap-3">
             <input id="autoInvoice" type="checkbox" className="h-4 w-4" checked={autoInvoice} onChange={(e)=>setAutoInvoice(e.target.checked)} />
-            <label htmlFor="autoInvoice" className="text-sm text-white/90">Auto-generate invoice numbers</label>
+            <label htmlFor="autoInvoice" className="text-sm text-white/90">{t('invoice.autoGenerate')}</label>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Default Payment Terms</label>
-            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder="e.g. Net 30" value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('invoice.paymentTerms')}</label>
+            <input type="text" className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" placeholder={t('invoice.paymentTermsPlaceholder')} value={paymentTerms} onChange={(e)=>setPaymentTerms(e.target.value)} />
           </div>
           <div className="md:col-span-2">
-            <label className="text-xs uppercase tracking-wide text-slate-400">Invoice Footer</label>
-            <textarea className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" rows="3" placeholder="Thank you for your business" value={invoiceFooter} onChange={(e)=>setInvoiceFooter(e.target.value)} />
+            <label className="text-xs uppercase tracking-wide text-slate-400">{t('invoice.invoiceFooter')}</label>
+            <textarea className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" rows="3" placeholder={t('invoice.invoiceFooterPlaceholder')} value={invoiceFooter} onChange={(e)=>setInvoiceFooter(e.target.value)} />
           </div>
         </div>
         <div className="mt-6 flex justify-end">
-          <button onClick={saveInvoice} disabled={loading || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Invoice Settings</button>
+          <button onClick={saveInvoice} disabled={loading || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{t('invoice.saveInvoiceSettings')}</button>
         </div>
       </section>
       )}
@@ -1018,26 +1025,26 @@ export default function Settings() {
       {/* Notification Preferences (owners only) */}
       {isOwner && active === "notifications" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="notifications">
-        <h2 className="text-lg font-semibold text-white/90">Notification Preferences</h2>
-        <p className="text-sm text-slate-400 mt-1">Choose how you want to receive notifications.</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('notifications.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('notifications.subtitle')}</p>
         <div className="mt-6 space-y-4">
           <label className="flex items-start gap-3">
             <input type="checkbox" className="mt-1 h-4 w-4" checked={emailNotif} onChange={(e)=>setEmailNotif(e.target.checked)} />
             <div>
-              <div className="text-sm text-white/90">Email Notifications</div>
-              <div className="text-xs text-slate-400">Receive notifications via email</div>
+              <div className="text-sm text-white/90">{t('notifications.emailNotifications')}</div>
+              <div className="text-xs text-slate-400">{t('notifications.emailNotificationsDescription')}</div>
             </div>
           </label>
           <label className="flex items-start gap-3">
             <input type="checkbox" className="mt-1 h-4 w-4" checked={pushNotif} onChange={(e)=>setPushNotif(e.target.checked)} />
             <div>
-              <div className="text-sm text-white/90">Push Notifications</div>
-              <div className="text-xs text-slate-400">Receive push notifications in browser</div>
+              <div className="text-sm text-white/90">{t('notifications.pushNotifications')}</div>
+              <div className="text-xs text-slate-400">{t('notifications.pushNotificationsDescription')}</div>
             </div>
           </label>
         </div>
         <div className="mt-6 flex justify-end">
-          <button onClick={saveNotifications} disabled={loading || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">Save Notification Settings</button>
+          <button onClick={saveNotifications} disabled={loading || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{t('notifications.saveNotificationSettings')}</button>
         </div>
       </section>
       )}
@@ -1045,12 +1052,12 @@ export default function Settings() {
       {/* Security Settings */}
       {active === "security" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="security">
-        <h2 className="text-lg font-semibold text-white/90">Security Settings</h2>
-        <p className="text-sm text-slate-400 mt-1">Manage your account security and privacy settings.</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('security.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('security.subtitle')}</p>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <div className="text-xs uppercase tracking-wide text-slate-400">Account Information</div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">{t('security.accountInformation')}</div>
             <div className="mt-2 text-sm text-white/90 space-y-1">
               <div>Email: <span className="text-white/80">{userRow?.email || "—"}</span></div>
               <div>Role: <span className="text-white/80">{userRow?.role || "user"}</span></div>
@@ -1059,14 +1066,14 @@ export default function Settings() {
           </div>
           <div className="space-y-3">
             <div>
-              <div className="text-xs uppercase tracking-wide text-slate-400">Password Management</div>
-              <p className="text-xs text-slate-400 mt-1">To reset your password, proceed to the secure password recovery page.</p>
-              <button className="mt-2 px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15">Reset Your Password</button>
+              <div className="text-xs uppercase tracking-wide text-slate-400">{t('security.passwordManagement')}</div>
+              <p className="text-xs text-slate-400 mt-1">{t('security.passwordManagementDescription')}</p>
+              <button className="mt-2 px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15">{t('security.resetPassword')}</button>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wide text-slate-400">Download Account Data</div>
-              <p className="text-xs text-slate-400 mt-1">Download a complete copy of your account data.</p>
-              <button className="mt-2 px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15">Download Account Data</button>
+              <div className="text-xs uppercase tracking-wide text-slate-400">{t('security.downloadAccountData')}</div>
+              <p className="text-xs text-slate-400 mt-1">{t('security.downloadAccountDataDescription')}</p>
+              <button className="mt-2 px-3 py-1.5 rounded-md text-xs bg-white/10 hover:bg-white/15">{t('security.downloadAccountData')}</button>
             </div>
           </div>
         </div>
@@ -1076,8 +1083,8 @@ export default function Settings() {
       {/* Appearance */}
       {active === "appearance" && (
       <section className="glass rounded-2xl border border-white/10 p-6" role="tabpanel" aria-labelledby="appearance">
-        <h2 className="text-lg font-semibold text-white/90">Appearance</h2>
-        <p className="text-sm text-slate-400 mt-1">Choose a color theme for the purple gradient areas (sidebar, active buttons, glows).</p>
+        <h2 className="text-lg font-semibold text-white/90">{t('appearance.title')}</h2>
+        <p className="text-sm text-slate-400 mt-1">{t('appearance.subtitle')}</p>
 
         {/* Preset gradients */}
         <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-4">
@@ -1107,8 +1114,8 @@ export default function Settings() {
 
         {/* Gradient angle */}
         <div className="mt-8">
-          <div className="text-sm font-medium text-white/90">Gradient Angle</div>
-          <p className="text-xs text-slate-400 mt-1">Controls the direction of gradients across the UI.</p>
+          <div className="text-sm font-medium text-white/90">{t('appearance.gradientAngle')}</div>
+          <p className="text-xs text-slate-400 mt-1">{t('appearance.gradientAngleDescription')}</p>
           <div className="mt-3 flex items-center gap-3">
             <input
               type="range"
@@ -1125,8 +1132,8 @@ export default function Settings() {
 
         {/* Glow customization */}
         <div className="mt-8">
-          <div className="text-sm font-medium text-white/90">Glow</div>
-          <p className="text-xs text-slate-400 mt-1">Choose glow color and intensity for active items and the sidebar shell.</p>
+          <div className="text-sm font-medium text-white/90">{t('appearance.glow')}</div>
+          <p className="text-xs text-slate-400 mt-1">{t('appearance.glowDescription')}</p>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 text-xs text-slate-300">
@@ -1135,7 +1142,7 @@ export default function Settings() {
                   checked={appearance.glow?.mode === "match"} 
                   onChange={() => handleGlowChange("match", null, appearance.glow?.depth)} 
                 />
-                Match theme
+                {t('appearance.matchTheme')}
               </label>
               <label className="flex items-center gap-2 text-xs text-slate-300">
                 <input 
@@ -1143,7 +1150,7 @@ export default function Settings() {
                   checked={appearance.glow?.mode === "custom"} 
                   onChange={() => handleGlowChange("custom", appearance.glow?.color, appearance.glow?.depth)} 
                 />
-                Custom
+                {t('appearance.custom')}
               </label>
               {appearance.glow?.mode === "custom" && (
                 <input 
@@ -1155,7 +1162,7 @@ export default function Settings() {
               )}
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-300">Depth</span>
+              <span className="text-xs text-slate-300">{t('appearance.depth')}</span>
               <input 
                 type="range" 
                 min="0" 
@@ -1172,10 +1179,10 @@ export default function Settings() {
 
         {/* Custom gradient */}
         <div className="mt-8">
-          <div className="text-sm font-medium text-white/90">Custom Gradient</div>
-          <p className="text-xs text-slate-400 mt-1">Pick two colors to build your own gradient.</p>
+          <div className="text-sm font-medium text-white/90">{t('appearance.customGradient')}</div>
+          <p className="text-xs text-slate-400 mt-1">{t('appearance.customGradientDescription')}</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-slate-300">From
+            <label className="flex items-center gap-2 text-xs text-slate-300">{t('appearance.from')}
               <input 
                 type="color" 
                 value={appearance.customColors.primary} 
@@ -1183,7 +1190,7 @@ export default function Settings() {
                 className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded" 
               />
             </label>
-            <label className="flex items-center gap-2 text-xs text-slate-300">To
+            <label className="flex items-center gap-2 text-xs text-slate-300">{t('appearance.to')}
               <input 
                 type="color" 
                 value={appearance.customColors.secondary} 
@@ -1197,8 +1204,8 @@ export default function Settings() {
 
         {/* Solid color accents */}
         <div className="mt-8">
-          <div className="text-sm font-medium text-white/90">Solid Color</div>
-          <p className="text-xs text-slate-400 mt-1">Use a single color for both gradient ends (pills and glows will match).</p>
+          <div className="text-sm font-medium text-white/90">{t('appearance.solidColor')}</div>
+          <p className="text-xs text-slate-400 mt-1">{t('appearance.solidColorDescription')}</p>
           <div className="mt-3 flex flex-wrap gap-3">
             {["#7C3AED","#2563EB","#4F46E5","#06B6D4","#10B981","#F59E0B","#E11D48"].map(c => (
               <button 
@@ -1209,7 +1216,7 @@ export default function Settings() {
                 aria-label={`Use ${c}`} 
               />
             ))}
-            <label className="flex items-center gap-2 text-xs text-slate-300 ml-1">Custom
+            <label className="flex items-center gap-2 text-xs text-slate-300 ml-1">{t('appearance.custom')}
               <input 
                 type="color" 
                 onChange={(e) => {
@@ -1224,13 +1231,13 @@ export default function Settings() {
 
         <div className="mt-6 flex items-center justify-between text-xs text-slate-400">
           <div className="flex items-center gap-3">
-            <span>Theme changes apply instantly. Save to your account to sync across devices.</span>
+            <span>{t('appearance.themeChangesApplyInstantly')}</span>
             {appearanceNotice && (
               <span className={`px-2 py-0.5 rounded-md border ${appearanceNotice.startsWith("Saved") ? "border-emerald-500/40 text-emerald-300" : "border-rose-500/40 text-rose-300"}`}>{appearanceNotice}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={saveAppearance} disabled={loading || savingAppearance} aria-busy={savingAppearance} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingAppearance ? "Saving…" : "Save Appearance"}</button>
+            <button onClick={saveAppearance} disabled={loading || savingAppearance} aria-busy={savingAppearance} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingAppearance ? t('appearance.saving') : t('appearance.saveAppearance')}</button>
             <button
               className="px-3 py-1.5 rounded-md border border-white/10 hover:bg-white/10"
               onClick={() => {
@@ -1243,7 +1250,7 @@ export default function Settings() {
                 setLocalAppearance(defaultAppearance)
                 updateAppearance(defaultAppearance)
               }}
-            >Reset to default</button>
+            >{t('appearance.resetToDefault')}</button>
           </div>
         </div>
       </section>

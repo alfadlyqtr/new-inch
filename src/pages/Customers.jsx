@@ -3,8 +3,10 @@ import { supabase } from "../lib/supabaseClient.js"
 import { useCan, PermissionGate, Forbidden } from "../lib/permissions.jsx"
 import CustomerCard from "../components/customers/CustomerCard.jsx"
 import CustomerForm from "../components/customers/CustomerForm.jsx"
+import { useTranslation } from 'react-i18next'
 
 export default function Customers() {
+  const { t } = useTranslation()
   const canView = useCan('customers','view')
   const canCreate = useCan('customers','create')
   const canEdit = useCan('customers','edit')
@@ -88,18 +90,18 @@ export default function Customers() {
       <div className="glass rounded-2xl border border-white/10 p-6">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-white/90">Customers</h1>
-            <p className="text-sm text-slate-400 mt-1">Manage your customers.</p>
+            <h1 className="text-xl font-semibold text-white/90">{t('customers.title')}</h1>
+            <p className="text-sm text-slate-400 mt-1">{t('customers.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
             <input
-              placeholder="Search name or phone…"
+              placeholder={t('customers.searchPlaceholder')}
               value={search}
               onChange={(e)=> setSearch(e.target.value)}
               className="rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
             />
             {canCreate && (
-              <button onClick={openCreate} className="px-3 py-2 rounded-md text-sm pill-active glow">+ Add Customer</button>
+              <button onClick={openCreate} className="px-3 py-2 rounded-md text-sm pill-active glow">{t('customers.addCustomer')}</button>
             )}
           </div>
         </div>
@@ -107,9 +109,9 @@ export default function Customers() {
 
       <div className="glass rounded-2xl border border-white/10 p-6">
         {loading ? (
-          <div className="text-slate-400">Loading…</div>
+          <div className="text-slate-400">{t('customers.loading')}</div>
         ) : filtered.length === 0 ? (
-          <div className="text-slate-400">No customers found</div>
+          <div className="text-slate-400">{t('customers.empty')}</div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map(c => (
@@ -123,7 +125,7 @@ export default function Customers() {
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto" onClick={()=>{ setFormOpen(false); setEditing(null) }}>
           <div className="w-full max-w-2xl mx-auto my-8 rounded-2xl border border-white/10 bg-slate-900 p-4 shadow-xl" onClick={(e)=> e.stopPropagation()}>
             <div className="flex items-center justify-between sticky top-0 bg-slate-900/95 backdrop-blur px-0 pb-3">
-              <div className="text-white/90 font-medium">{editing ? 'Edit Customer' : 'Add Customer'}</div>
+              <div className="text-white/90 font-medium">{editing ? t('customers.modal.editTitle') : t('customers.modal.addTitle')}</div>
               <button onClick={()=>{ setFormOpen(false); setEditing(null) }} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
             </div>
             <div className="mt-2 space-y-4">

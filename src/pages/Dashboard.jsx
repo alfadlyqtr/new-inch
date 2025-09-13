@@ -2,8 +2,10 @@ import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabaseClient.js"
 import { useCan, PermissionGate } from "../lib/permissions.jsx"
 import QuickAttendance from "../components/attendance/QuickAttendance.jsx"
+import { useTranslation } from 'react-i18next'
 
 export default function Dashboard() {
+  const { t } = useTranslation()
   // Live clock for date/time in the business banner
   const [now, setNow] = useState(new Date())
   // Backend-loaded business/user context
@@ -17,8 +19,8 @@ export default function Dashboard() {
   // Attendance widget IDs
   const [attIds, setAttIds] = useState({ business_id: null, staff_id: null, staff_name: "" })
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(t)
+    const tmr = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(tmr)
   }, [])
 
   // Load current user -> users_app -> business
@@ -103,8 +105,8 @@ export default function Dashboard() {
                 // Update Attendance IDs with real staff_id from staff table
                 setAttIds((prev) => ({ ...prev, staff_id: srow.id }))
                 try {
-                  const m = /StaffID\s*:\s*([^\n]+)/i.exec(srow.notes || '')
-                  if (m && m[1]) setEmploymentCode(m[1].trim())
+                  const m = /StaffID\s*:\s*[^\n]+/i.exec(srow.notes || '')
+                  if (m && m[0]) setEmploymentCode((m[0].split(':')[1] || '').trim())
                 } catch {}
               }
             } catch (_) {}
@@ -124,12 +126,12 @@ export default function Dashboard() {
   const canViewInventory = useCan('inventory', 'view')
 
   const stats = [
-    { label: "Total Orders", value: 0, icon: "📦", can: canViewOrders },
-    { label: "Total Customers", value: 0, icon: "👥", can: canViewCustomers },
+    { label: t('dashboard.totalOrders'), value: 0, icon: "📦", can: canViewOrders },
+    { label: t('dashboard.totalCustomers'), value: 0, icon: "👥", can: canViewCustomers },
     // Revenue typically relates to invoices; if you prefer orders, switch to canViewOrders
-    { label: "Total Revenue", value: "$0", icon: "💵", can: canViewInvoices },
-    { label: "Pending Orders", value: 0, icon: "⏳", can: canViewOrders },
-    { label: "Low Stock Items", value: 0, icon: "⚠️", can: canViewInventory },
+    { label: t('dashboard.totalRevenue'), value: "$0", icon: "💵", can: canViewInvoices },
+    { label: t('dashboard.pendingOrders'), value: 0, icon: "⏳", can: canViewOrders },
+    { label: t('dashboard.lowStockItems'), value: 0, icon: "⚠️", can: canViewInventory },
   ]
   const visibleStats = stats.filter(s => s.can)
 
@@ -154,8 +156,8 @@ export default function Dashboard() {
     <div className="space-y-6">
       {/* Business banner */}
       <div className="glass rounded-2xl border border-white/10 p-5 flex items-center gap-4">
-        <span className="text-sm text-slate-300 px-2 py-1 rounded-md bg-white/5 border border-white/10">Business</span>
-        <div className="text-xs text-slate-400">ID: <span className="text-slate-300">{businessId || "—"}</span></div>
+        <span className="text-sm text-slate-300 px-2 py-1 rounded-md bg-white/5 border border-white/10">{t('dashboard.businessBadge')}</span>
+        <div className="text-xs text-slate-400">{t('dashboard.idLabel')}: <span className="text-slate-300">{businessId || "—"}</span></div>
         {/* Welcome + Date/Time (in the middle, before owner) */}
         <div className="flex items-center gap-3 text-xs text-slate-300">
           {logoUrl ? (
@@ -165,7 +167,7 @@ export default function Dashboard() {
               className="h-6 w-6 rounded-md object-cover border border-white/10"
             />
           ) : null}
-          <span className="hidden sm:inline text-white/90 font-medium mr-1">{businessName ? `Welcome ${businessName} to INCH` : 'Welcome to INCH'}</span>
+          <span className="hidden sm:inline text-white/90 font-medium mr-1">{businessName ? t('dashboard.welcomeBusinessToBrand', { name: businessName }) : t('dashboard.welcomeToBrand')}</span>
           <div className="flex items-center gap-2 whitespace-nowrap">
             <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">{dateStr}</span>
             <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 font-mono">{timeStr}</span>
@@ -181,11 +183,11 @@ export default function Dashboard() {
         <div className="ml-auto text-xs text-slate-300 flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
             <span>{ownerName || "—"}</span>
-            <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? "Business Owner 👑" : "Staff"}</span>
+            <span className="ml-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">{userRow?.is_business_owner ? t('layout.roleOwner') : t('layout.roleStaff')}</span>
           </div>
           {!userRow?.is_business_owner && employmentCode && (
-            <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono" title={`StaffID: ${employmentCode}`}>
-              StaffID: {employmentCode}
+            <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono" title={`${t('dashboard.staffId')}: ${employmentCode}`}>
+              {t('dashboard.staffId')}: {employmentCode}
             </span>
           )}
         </div>
@@ -210,15 +212,15 @@ export default function Dashboard() {
         <PermissionGate module="orders" action="view">
         <div className="glass rounded-2xl border border-white/10 p-6 lg:col-span-2 min-h-[220px]">
           <div className="flex items-center justify-between">
-            <div className="text-white/90 font-medium">Recent Orders</div>
-            <button className="px-2 py-1 text-xs rounded-md bg-white/5 border border-white/10 text-slate-300">View All</button>
+            <div className="text-white/90 font-medium">{t('dashboard.recentOrders')}</div>
+            <button className="px-2 py-1 text-xs rounded-md bg-white/5 border border-white/10 text-slate-300">{t('common.viewAll')}</button>
           </div>
           <div className="mt-6 h-40 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center text-slate-400">
             <div className="text-center">
               <div className="text-3xl mb-2">📦</div>
-              <div>No orders yet</div>
+              <div>{t('common.noOrdersYet')}</div>
               <PermissionGate module="orders" action="create">
-                <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">Create First Order</button>
+                <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">{t('common.createFirstOrder')}</button>
               </PermissionGate>
             </div>
           </div>
@@ -226,9 +228,9 @@ export default function Dashboard() {
         </PermissionGate>
         <PermissionGate module="inventory" action="view">
         <div className="glass rounded-2xl border border-white/10 p-6 min-h-[220px]">
-          <div className="text-white/90 font-medium">Low Stock Alerts</div>
-          <p className="text-sm text-slate-400 mt-1">All fabrics are well stocked</p>
-          <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">View Inventory</button>
+          <div className="text-white/90 font-medium">{t('dashboard.lowStockAlerts')}</div>
+          <p className="text-sm text-slate-400 mt-1">{t('dashboard.allFabricsStocked')}</p>
+          <button className="mt-4 px-3 py-2 rounded-md text-sm pill-active glow">{t('dashboard.viewInventory')}</button>
         </div>
         </PermissionGate>
       </div>
@@ -236,28 +238,28 @@ export default function Dashboard() {
       {/* Quick + Activity */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="glass rounded-2xl border border-white/10 p-6 lg:col-span-2">
-          <div className="text-white/90 font-medium">Quick Actions</div>
+          <div className="text-white/90 font-medium">{t('common.quickActions')}</div>
           <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {canCreateOrder && (
-              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">New Order</button>
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">{t('common.newOrder')}</button>
             )}
             {canCreateCustomer && (
-              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Add Customer</button>
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">{t('common.addCustomer')}</button>
             )}
             {canCreateJobCard && (
-              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Create Job Card</button>
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">{t('common.createJobCard')}</button>
             )}
             {canCreateExpense && (
-              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">Record Expense</button>
+              <button className="h-20 rounded-xl pill-active glow text-sm font-medium">{t('common.recordExpense')}</button>
             )}
           </div>
         </div>
         <div className="glass rounded-2xl border border-white/10 p-6">
-          <div className="text-white/90 font-medium">Today's Activity</div>
+          <div className="text-white/90 font-medium">{t('dashboard.todaysActivity')}</div>
           <div className="mt-4 space-y-3 text-sm">
-            <div className="flex items-center justify-between text-slate-300"><span>New Orders</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
-            <div className="flex items-center justify-between text-slate-300"><span>Orders Ready</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
-            <div className="flex items-center justify-between text-slate-300"><span>In Progress</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
+            <div className="flex items-center justify-between text-slate-300"><span>{t('dashboard.nowOrders')}</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
+            <div className="flex items-center justify-between text-slate-300"><span>{t('dashboard.ordersReady')}</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
+            <div className="flex items-center justify-between text-slate-300"><span>{t('dashboard.inProgress')}</span><span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">0</span></div>
           </div>
         </div>
       </div>

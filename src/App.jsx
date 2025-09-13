@@ -1,44 +1,45 @@
-import React from "react"
+import React, { Suspense } from "react"
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom"
 import BoLayout from "./layouts/BoLayout.jsx"
 import StaffLayout from "./layouts/StaffLayout.jsx"
 import AdminLayout from "./layouts/AdminLayout.jsx"
-import Dashboard from "./pages/Dashboard.jsx"
-import Auth from "./pages/Auth.jsx"
-import BoSetup from "./pages/BoSetup.jsx"
-import StaffSetup from "./pages/StaffSetup.jsx"
-import AdminDash from "./pages/AdminDash.jsx"
-import Customers from "./pages/Customers.jsx"
-import Orders from "./pages/Orders.jsx"
-import JobCards from "./pages/JobCards.jsx"
-import Invoices from "./pages/Invoices.jsx"
-import Inventory from "./pages/Inventory.jsx"
-import Staff from "./pages/Staff.jsx"
-import Expenses from "./pages/Expenses.jsx"
-import Reports from "./pages/Reports.jsx"
-import Messages from "./pages/Messages.jsx"
-import PublicProfile from "./pages/PublicProfile.jsx"
-import Settings from "./pages/Settings.jsx"
-import AdminAuth from "./pages/AdminAuth.jsx"
-import Home from "./pages/Home.jsx"
-import AdminOverview from "./pages/admin/AdminOverview.jsx"
-import AdminApprovals from "./pages/admin/Approvals.jsx"
-import AdminTenants from "./pages/admin/Tenants.jsx"
-import AdminUsers from "./pages/admin/Users.jsx"
-import AdminSecurity from "./pages/admin/Security.jsx"
-import AdminOperations from "./pages/admin/Operations.jsx"
-import AdminBilling from "./pages/admin/Billing.jsx"
-import AdminSupport from "./pages/admin/Support.jsx"
-import AdminObservability from "./pages/admin/Observability.jsx"
-import PendingApproval from "./pages/PendingApproval.jsx"
-import Signup from "./pages/Signup.jsx"
-import PublicBusiness from "./pages/PublicBusiness.jsx"
-import { supabase } from "./lib/supabaseClient.js"
-import { AppearanceProvider } from "./contexts/AppearanceContext"
-import PunchInGate from "./components/attendance/PunchInGate.jsx"
-import TimeTrackingSystem from "./pages/staff/TimeTrackingSystem.jsx"
-import StaffDashboard from "./pages/staff/StaffDashboard.jsx"
-import PayrollManagement from "./pages/staff/PayrollManagement.jsx"
+
+const Dashboard = React.lazy(() => import("./pages/Dashboard.jsx"))
+const Auth = React.lazy(() => import("./pages/Auth.jsx"))
+const BoSetup = React.lazy(() => import("./pages/BoSetup.jsx"))
+const StaffSetup = React.lazy(() => import("./pages/StaffSetup.jsx"))
+const AdminDash = React.lazy(() => import("./pages/AdminDash.jsx"))
+const Customers = React.lazy(() => import("./pages/Customers.jsx"))
+const Orders = React.lazy(() => import("./pages/Orders.jsx"))
+const JobCards = React.lazy(() => import("./pages/JobCards.jsx"))
+const Invoices = React.lazy(() => import("./pages/Invoices.jsx"))
+const Inventory = React.lazy(() => import("./pages/Inventory.jsx"))
+const Staff = React.lazy(() => import("./pages/Staff.jsx"))
+const Expenses = React.lazy(() => import("./pages/Expenses.jsx"))
+const Reports = React.lazy(() => import("./pages/Reports.jsx"))
+const Messages = React.lazy(() => import("./pages/Messages.jsx"))
+const PublicProfile = React.lazy(() => import("./pages/PublicProfile.jsx"))
+const Settings = React.lazy(() => import("./pages/Settings.jsx"))
+const AdminAuth = React.lazy(() => import("./pages/AdminAuth.jsx"))
+const Home = React.lazy(() => import("./pages/Home.jsx"))
+const AdminOverview = React.lazy(() => import("./pages/admin/AdminOverview.jsx"))
+const AdminApprovals = React.lazy(() => import("./pages/admin/Approvals.jsx"))
+const AdminTenants = React.lazy(() => import("./pages/admin/Tenants.jsx"))
+const AdminUsers = React.lazy(() => import("./pages/admin/Users.jsx"))
+const AdminSecurity = React.lazy(() => import("./pages/admin/Security.jsx"))
+const AdminOperations = React.lazy(() => import("./pages/admin/Operations.jsx"))
+const AdminBilling = React.lazy(() => import("./pages/admin/Billing.jsx"))
+const AdminSupport = React.lazy(() => import("./pages/admin/Support.jsx"))
+const AdminObservability = React.lazy(() => import("./pages/admin/Observability.jsx"))
+const PendingApproval = React.lazy(() => import("./pages/PendingApproval.jsx"))
+const Signup = React.lazy(() => import("./pages/Signup.jsx"))
+const PublicBusiness = React.lazy(() => import("./pages/PublicBusiness.jsx"))
+const { supabase } = React.lazy(() => import("./lib/supabaseClient.js"))
+const { AppearanceProvider } = React.lazy(() => import("./contexts/AppearanceContext"))
+const PunchInGate = React.lazy(() => import("./components/attendance/PunchInGate.jsx"))
+const TimeTrackingSystem = React.lazy(() => import("./pages/staff/TimeTrackingSystem.jsx"))
+const StaffDashboard = React.lazy(() => import("./pages/staff/StaffDashboard.jsx"))
+const PayrollManagement = React.lazy(() => import("./pages/staff/PayrollManagement.jsx"))
 
 function NotFound() {
   return (
@@ -83,68 +84,254 @@ function App() {
       <BrowserRouter>
         <Routes>
         {/* Public home at "/" */}
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <Home />
+          </Suspense>
+        } />
         {/* No traffic cop; /app not used */}
         {/* Role-aware redirect to appropriate dashboard */}
         <Route path="/dashboard" element={<SmartDashboardRedirect />} />
         {/* Admin auth (standalone, no layout) */}
-        <Route path="/mqtr" element={<AdminAuth />} />
+        <Route path="/mqtr" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <AdminAuth />
+          </Suspense>
+        } />
         {/* User auth (standalone, no layout) */}
-        <Route path="/auth" element={<Auth />} />
-        <Route path="/signup" element={<Signup />} />
-        <Route path="/pending-approval" element={<PendingApproval />} />
+        <Route path="/auth" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <Auth />
+          </Suspense>
+        } />
+        <Route path="/signup" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <Signup />
+          </Suspense>
+        } />
+        <Route path="/pending-approval" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <PendingApproval />
+          </Suspense>
+        } />
         {/* Standalone setup routes (no layout) */}
-        <Route path="/bo/setup" element={<BoSetup />} />
-        <Route path="/staff/setup" element={<StaffSetup />} />
+        <Route path="/bo/setup" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <BoSetup />
+          </Suspense>
+        } />
+        <Route path="/staff/setup" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <StaffSetup />
+          </Suspense>
+        } />
         <Route path="/bo" element={<BoLayout />}>
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="admindash" element={<AdminDash />} />
-          <Route path="customers" element={<Customers />} />
-          <Route path="orders" element={<Orders />} />
-          <Route path="job-cards" element={<JobCards />} />
-          <Route path="invoices" element={<Invoices />} />
-          <Route path="inventory" element={<Inventory />} />
-          <Route path="staff" element={<Staff />} />
-          <Route path="expenses" element={<Expenses />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="messages" element={<Messages />} />
-          <Route path="public-profile" element={<PublicProfile />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="dashboard" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Dashboard />
+            </Suspense>
+          } />
+          <Route path="admindash" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminDash />
+            </Suspense>
+          } />
+          <Route path="customers" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Customers />
+            </Suspense>
+          } />
+          <Route path="orders" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Orders />
+            </Suspense>
+          } />
+          <Route path="job-cards" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <JobCards />
+            </Suspense>
+          } />
+          <Route path="invoices" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Invoices />
+            </Suspense>
+          } />
+          <Route path="inventory" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Inventory />
+            </Suspense>
+          } />
+          <Route path="staff" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Staff />
+            </Suspense>
+          } />
+          <Route path="expenses" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Expenses />
+            </Suspense>
+          } />
+          <Route path="reports" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Reports />
+            </Suspense>
+          } />
+          <Route path="messages" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Messages />
+            </Suspense>
+          } />
+          <Route path="public-profile" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <PublicProfile />
+            </Suspense>
+          } />
+          <Route path="settings" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Settings />
+            </Suspense>
+          } />
         </Route>
         <Route path="/staff" element={<StaffLayout />}>
-          <Route path="dashboard" element={<PunchInGate><StaffDashboard /></PunchInGate>} />
-          <Route path="customers" element={<Customers />} />
-          <Route path="orders" element={<Orders />} />
-          <Route path="job-cards" element={<JobCards />} />
-          <Route path="invoices" element={<Invoices />} />
-          <Route path="inventory" element={<Inventory />} />
-          <Route path="expenses" element={<Expenses />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="messages" element={<Messages />} />
-          <Route path="public-profile" element={<PublicProfile />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="my-attendance" element={<TimeTrackingSystem />} />
-          <Route path="payroll" element={<PayrollManagement />} />
+          <Route path="dashboard" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <PunchInGate>
+                <StaffDashboard />
+              </PunchInGate>
+            </Suspense>
+          } />
+          <Route path="customers" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Customers />
+            </Suspense>
+          } />
+          <Route path="orders" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Orders />
+            </Suspense>
+          } />
+          <Route path="job-cards" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <JobCards />
+            </Suspense>
+          } />
+          <Route path="invoices" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Invoices />
+            </Suspense>
+          } />
+          <Route path="inventory" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Inventory />
+            </Suspense>
+          } />
+          <Route path="expenses" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Expenses />
+            </Suspense>
+          } />
+          <Route path="reports" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Reports />
+            </Suspense>
+          } />
+          <Route path="messages" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Messages />
+            </Suspense>
+          } />
+          <Route path="public-profile" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <PublicProfile />
+            </Suspense>
+          } />
+          <Route path="settings" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <Settings />
+            </Suspense>
+          } />
+          <Route path="my-attendance" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <TimeTrackingSystem />
+            </Suspense>
+          } />
+          <Route path="payroll" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <PayrollManagement />
+            </Suspense>
+          } />
         </Route>
         {/* Public profile viewer routes (place before 404) */}
-        <Route path="/business/:idOrSlug" element={<PublicBusiness />} />
+        <Route path="/business/:idOrSlug" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <PublicBusiness />
+          </Suspense>
+        } />
         {/* Slug viewer is namespaced to avoid conflicts with app routes */}
-        <Route path="/p/:slug" element={<PublicBusiness />} />
+        <Route path="/p/:slug" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <PublicBusiness />
+          </Suspense>
+        } />
         {/* Pretty root slug: inch.qa/<slug>. Keep near the end so specific app routes win first. */}
-        <Route path=":slug" element={<PublicBusiness />} />
+        <Route path=":slug" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <PublicBusiness />
+          </Suspense>
+        } />
         {/* Platform Admin routes */}
         <Route path="/platform-admin" element={<AdminLayout />}>
-          <Route index element={<AdminOverview />} />
-          <Route path="approvals" element={<AdminApprovals />} />
-          <Route path="tenants" element={<AdminTenants />} />
-          <Route path="users" element={<AdminUsers />} />
-          <Route path="security" element={<AdminSecurity />} />
-          <Route path="operations" element={<AdminOperations />} />
-          <Route path="billing" element={<AdminBilling />} />
-          <Route path="support" element={<AdminSupport />} />
-          <Route path="observability" element={<AdminObservability />} />
+          <Route index element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminOverview />
+            </Suspense>
+          } />
+          <Route path="approvals" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminApprovals />
+            </Suspense>
+          } />
+          <Route path="tenants" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminTenants />
+            </Suspense>
+          } />
+          <Route path="users" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminUsers />
+            </Suspense>
+          } />
+          <Route path="security" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminSecurity />
+            </Suspense>
+          } />
+          <Route path="operations" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminOperations />
+            </Suspense>
+          } />
+          <Route path="billing" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminBilling />
+            </Suspense>
+          } />
+          <Route path="support" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminSupport />
+            </Suspense>
+          } />
+          <Route path="observability" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminObservability />
+            </Suspense>
+          } />
         </Route>
-        <Route path="*" element={<NotFound />} />
+        <Route path="*" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <NotFound />
+          </Suspense>
+        } />
         </Routes>
       </BrowserRouter>
     </AppearanceProvider>

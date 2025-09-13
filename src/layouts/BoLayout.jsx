@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient.js"
 import 'driver.js/dist/driver.css'
 import { PermissionProvider } from "../lib/permissions.jsx"
 import { useAppearance } from "../contexts/AppearanceContext"
+import { useTranslation } from 'react-i18next'
 
 const navItems = [
   { to: "/bo/dashboard", label: "dashboard", icon: "🏠" },
@@ -37,8 +38,10 @@ function SideLink({ to, label, icon, collapsed }) {
 }
 
 export default function BoLayout() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [session, setSession] = useState(null)
   const [isOwner, setIsOwner] = useState(false)
@@ -127,7 +130,6 @@ export default function BoLayout() {
     })()
   }, [session])
 
-  // Presence: always advertise online while user is in the app
   useEffect(() => {
     if (!usersAppId || !businessId) return
     let channel
@@ -205,19 +207,32 @@ export default function BoLayout() {
   return (
     <PermissionProvider owner={true}>
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
-      <aside className={`${collapsed ? "w-20" : "w-80"} relative sticky top-6 h-[88vh] overflow-visible px-2 mx-3 z-20`}>
+      {/* Mobile overlay backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside className={`${
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      } fixed md:relative inset-y-0 left-0 z-40 transition-transform duration-300 ease-in-out ${
+        collapsed ? "w-20" : "w-80"
+      } relative sticky top-6 h-[88vh] overflow-visible px-2 mx-3`}>
         <div className={`h-full ${collapsed ? "w-full" : "w-[16rem] mx-auto"} overflow-y-auto no-scrollbar rounded-3xl p-2 sidebar-surface glow ring-1 ring-white/25`}>
           <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
             <img src="/logo.jpg" alt="INCH logo" className="h-10 w-10 rounded-md object-cover border border-white/20 glow bg-white/5" />
             {!collapsed && (
               <div>
-                <div className="text-white font-semibold leading-5">INCH</div>
-                <div className="text-xs text-white/70">Tailoring SaaS</div>
+                <div className="text-white font-semibold leading-5">{t('layout.brandName')}</div>
+                <div className="text-xs text-white/70">{t('layout.brandTag')}</div>
               </div>
             )}
           </div>
           <nav className="mt-1 flex flex-col gap-1">
-            {navItems.map((n) => (<SideLink key={n.to} {...n} collapsed={collapsed} />))}
+            {navItems.map((n) => (<SideLink key={n.to} to={n.to} icon={n.icon} collapsed={collapsed} label={t(`nav.${n.label}`)} />))}
           </nav>
           {/* Footer blocks */}
           <div className="mt-auto p-2">
@@ -230,7 +245,7 @@ export default function BoLayout() {
               {!collapsed && (
                 <div className="text-xs">
                   <div className="text-white/90">{userName || "—"}</div>
-                  <div className="text-white/70">Business Owner 👑</div>
+                  <div className="text-white/70">{t('layout.roleOwner')}</div>
                 </div>
               )}
             </div>
@@ -246,7 +261,7 @@ export default function BoLayout() {
                   <line x1="21" y1="12" x2="9" y2="12" />
                 </svg>
                 {!collapsed && (
-                  <span>{signingOut ? "Signing out…" : "Sign out"}</span>
+                  <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
                 )}
               </button>
             </div>
@@ -254,14 +269,26 @@ export default function BoLayout() {
         </div>
         <button
           onClick={() => setCollapsed((v) => !v)}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? t('common.expandSidebar') : t('common.collapseSidebar')}
           className="absolute right-0 translate-x-1/2 top-1/2 -translate-y-1/2 z-50 h-9 w-9 rounded-full text-white flex items-center justify-center backdrop-blur glow shadow-2xl ring-2 ring-white/80 bg-gradient-to-tr from-brand-fuchsia to-brand-primary hover:brightness-110"
         >
           <svg className={`${collapsed ? "rotate-180" : ""} transition-transform duration-200 h-4 w-4 drop-shadow`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
       </aside>
+
+      {/* Main content */}
       <div className="flex-1 min-w-0">
-        <main className="max-w-7xl mx-auto p-6">
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="md:hidden fixed top-4 left-4 z-50 h-10 w-10 rounded-full bg-white/10 backdrop-blur flex items-center justify-center text-white hover:bg-white/20 transition"
+          aria-label="Open sidebar"
+        >
+          <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <main className="max-w-7xl mx-auto p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

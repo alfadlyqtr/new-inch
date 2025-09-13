@@ -615,7 +615,7 @@ export default function AppLayout() {
           {/* Themed rounded shell */}
           <div className={`h-full ${collapsed ? "w-full" : "w-[16rem] mx-auto"} overflow-y-auto no-scrollbar rounded-3xl p-2 sidebar-surface glow ring-1 ring-white/25`}>
             {/* Brand */}
-            <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}> 
+            <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
               <img
                 src="/logo.jpg"
                 alt="INCH logo"
@@ -623,8 +623,8 @@ export default function AppLayout() {
               />
               {!collapsed && (
                 <div>
-                  <div className="text-white font-semibold leading-5">INCH</div>
-                  <div className="text-xs text-white/70">Tailoring SaaS</div>
+                  <div className="text-white font-semibold leading-5">{t('layout.brandName')}</div>
+                  <div className="text-xs text-white/70">{t('layout.brandTag')}</div>
                 </div>
               )}
             </div>
@@ -632,7 +632,7 @@ export default function AppLayout() {
             {/* Nav */}
             <nav className="mt-1 flex flex-col gap-1">
               {visibleNav.map((n) => (
-                <SideLink key={n.to} {...n} collapsed={collapsed} />
+                <SideLink key={n.to} to={n.to} icon={n.icon} collapsed={collapsed} label={t(`nav.${n.label}`)} />
               ))}
             </nav>
 
@@ -660,7 +660,7 @@ export default function AppLayout() {
                 {!collapsed && (
                   <div className="text-xs">
                     <div className="text-white/90">{userName || "—"}</div>
-                    <div className="text-white/70">{userIsOwner ? "Business Owner 👑" : (userRole || "Staff")}</div>
+                    <div className="text-white/70">{userIsOwner ? t('layout.roleOwner') : t('layout.roleStaff')}</div>
                   </div>
                 )}
               </div>
@@ -669,8 +669,8 @@ export default function AppLayout() {
                 <button
                   onClick={handleSignOut}
                   disabled={signingOut}
-                  aria-label="Sign out"
-                  title="Sign out"
+                  aria-label={t('common.signOut')}
+                  title={t('common.signOut')}
                   className={`w-full bg-transparent shadow-none ring-0 border-0 p-0 text-sm flex items-center ${collapsed ? "justify-center" : "justify-start gap-2"} text-rose-400 hover:text-rose-300 transition ${signingOut ? "opacity-60" : ""}`}
                 >
                   {/* logout icon */}
@@ -680,7 +680,7 @@ export default function AppLayout() {
                     <line x1="21" y1="12" x2="9" y2="12" />
                   </svg>
                   {!collapsed && (
-                    <span>{signingOut ? "Signing out…" : "Sign out"}</span>
+                    <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
                   )}
                 </button>
               </div>
@@ -690,7 +690,7 @@ export default function AppLayout() {
           {/* Collapse toggle button */}
           <button
             onClick={() => setCollapsed((v) => !v)}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? t('common.expandSidebar') : t('common.collapseSidebar')}
             className="absolute right-0 translate-x-1/2 top-1/2 -translate-y-1/2 z-50 h-9 w-9 rounded-full text-white flex items-center justify-center backdrop-blur glow shadow-2xl ring-2 ring-white/80 bg-gradient-to-tr from-brand-fuchsia to-brand-primary hover:brightness-110"
           >
             <svg
