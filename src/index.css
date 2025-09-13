@@ -133,3 +133,23 @@
 .btn-logout:active {
   transform: translateY(0);
 }
+
+/* Flowing sheen animation */
+@keyframes sheen-sweep {
+  from { transform: translateX(-120%); opacity: 0.0; }
+  30%  { opacity: 0.35; }
+  70%  { opacity: 0.35; }
+  to   { transform: translateX(120%); opacity: 0.0; }
+}
+.sheen {
+  position: relative;
+}
+.sheen::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.35) 50%, transparent 60%);
+  filter: blur(8px);
+  pointer-events: none;
+  animation: sheen-sweep 3.2s ease-in-out infinite;
+}
