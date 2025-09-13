@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-route
 import BoLayout from "./layouts/BoLayout.jsx"
 import StaffLayout from "./layouts/StaffLayout.jsx"
 import AdminLayout from "./layouts/AdminLayout.jsx"
+import { supabase } from "./lib/supabaseClient.js"
+import { AppearanceProvider } from "./contexts/AppearanceContext"
 
 const Dashboard = React.lazy(() => import("./pages/Dashboard.jsx"))
 const Auth = React.lazy(() => import("./pages/Auth.jsx"))
@@ -34,8 +36,6 @@ const AdminObservability = React.lazy(() => import("./pages/admin/Observability.
 const PendingApproval = React.lazy(() => import("./pages/PendingApproval.jsx"))
 const Signup = React.lazy(() => import("./pages/Signup.jsx"))
 const PublicBusiness = React.lazy(() => import("./pages/PublicBusiness.jsx"))
-const { supabase } = React.lazy(() => import("./lib/supabaseClient.js"))
-const { AppearanceProvider } = React.lazy(() => import("./contexts/AppearanceContext"))
 const PunchInGate = React.lazy(() => import("./components/attendance/PunchInGate.jsx"))
 const TimeTrackingSystem = React.lazy(() => import("./pages/staff/TimeTrackingSystem.jsx"))
 const StaffDashboard = React.lazy(() => import("./pages/staff/StaffDashboard.jsx"))

@@ -94,7 +94,7 @@ export default function AdminLayout() {
       {/* Mobile overlay backdrop */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
@@ -103,9 +103,17 @@ export default function AdminLayout() {
       <aside className={`${
         mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       } fixed md:relative inset-y-0 left-0 z-40 transition-transform duration-300 ease-in-out ${
-        collapsed ? "w-16" : "w-64"
-      } relative sticky top-6 h-[88vh] overflow-y-auto px-2 mx-3`}>
-        <div className="h-full rounded-3xl p-3 bg-gradient-to-b from-brand-primary/85 to-brand-fuchsia/75 shadow-[0_20px_60px_rgba(124,58,237,0.5)] ring-1 ring-white/25">
+        collapsed ? "w-screen md:w-16" : "w-screen md:w-64"
+      } relative md:sticky md:top-6 h-screen md:h-[88vh] overflow-y-auto px-0 md:px-2 md:mx-3`}>
+        <div className="h-full md:rounded-3xl p-3 sidebar-surface glow ring-1 ring-white/25">
+          {/* Mobile close button */}
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden absolute top-3 right-3 h-9 w-9 rounded-full bg-white/10 text-white flex items-center justify-center ring-1 ring-white/20"
+            aria-label="Close sidebar"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
           {/* Brand */}
           <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
             <div className="h-9 w-9 rounded-full glow bg-gradient-to-tr from-brand-primary to-brand-fuchsia" />
@@ -128,7 +136,7 @@ export default function AdminLayout() {
           <div className="mt-auto p-2">
             <div className={`glass rounded-xl p-2 text-xs text-white/85 flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
               {!collapsed && <span>Collapse</span>}
-              <button onClick={() => setCollapsed((v) => !v)} className="px-2 py-1 rounded-md bg-white/10">{collapsed ? "»" : "«"}</button>
+              <button onClick={() => setCollapsed((v) => !v)} className="hidden md:inline-block px-2 py-1 rounded-md bg-white/10">{collapsed ? "»" : "«"}</button>
             </div>
           </div>
         </div>

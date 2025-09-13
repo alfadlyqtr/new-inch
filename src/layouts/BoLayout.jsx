@@ -21,7 +21,7 @@ const navItems = [
   { to: "/bo/settings", label: "settings", icon: "⚙️" },
 ]
 
-function SideLink({ to, label, icon, collapsed }) {
+function SideLink({ to, label, icon, collapsed, onNavigate }) {
   return (
     <NavLink
       to={to}
@@ -30,6 +30,7 @@ function SideLink({ to, label, icon, collapsed }) {
           isActive ? "pill-active glow" : "text-white/80 hover:bg-white/10"
         }`
       }
+      onClick={() => { try { onNavigate && onNavigate() } catch {} }}
     >
       <span className="text-base/none opacity-90">{icon}</span>
       {!collapsed && <span className="capitalize">{label}</span>}
@@ -68,6 +69,16 @@ export default function BoLayout() {
     })
     return () => { mounted = false; subscription.unsubscribe() }
   }, [])
+
+  useEffect(() => {
+    // When mobile nav is open, lock body scroll
+    if (mobileOpen) {
+      try { document.body.style.overflow = 'hidden' } catch {}
+    } else {
+      try { document.body.style.overflow = '' } catch {}
+    }
+    return () => { try { document.body.style.overflow = '' } catch {} }
+  }, [mobileOpen])
 
   useEffect(() => {
     (async () => {
@@ -204,27 +215,41 @@ export default function BoLayout() {
     return null
   }
 
+  // When mobile menu is open, force expanded labels
+  const effectiveCollapsed = collapsed && !mobileOpen
+
   return (
     <PermissionProvider owner={true}>
     <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
       {/* Mobile overlay backdrop */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside className={`${
-        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-      } fixed md:relative inset-y-0 left-0 z-40 transition-transform duration-300 ease-in-out ${
-        collapsed ? "w-20" : "w-80"
-      } relative sticky top-6 h-[88vh] overflow-visible px-2 mx-3`}>
-        <div className={`h-full ${collapsed ? "w-full" : "w-[16rem] mx-auto"} overflow-y-auto no-scrollbar rounded-3xl p-2 sidebar-surface glow ring-1 ring-white/25`}>
-          <div className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
+        // On mobile, aside itself is width 0 so it does not push content; overlay panel below is fixed.
+        effectiveCollapsed ? "w-0 md:w-20" : "w-0 md:w-80"
+      } relative md:sticky md:top-6 h-0 md:h-[88vh] overflow-visible md:px-2 md:mx-3`}>
+        {/* Mobile overlay panel */}
+        <div className={`${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        } fixed inset-y-0 left-0 z-40 w-1/2 md:static md:w-auto md:translate-x-0 transition-transform duration-300 ease-in-out`}>
+        <div className={`h-full w-1/2 md:w-full overflow-y-auto no-scrollbar md:rounded-3xl md:p-2 sidebar-surface glow md:ring-1 md:ring-white/25`}>
+          {/* Mobile close button */}
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden absolute top-3 right-3 h-9 w-9 rounded-full bg-white/10 text-white flex items-center justify-center ring-1 ring-white/20"
+            aria-label="Close sidebar"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+          <div className={`flex items-center ${effectiveCollapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
             <img src="/logo.jpg" alt="INCH logo" className="h-10 w-10 rounded-md object-cover border border-white/20 glow bg-white/5" />
-            {!collapsed && (
+            {!effectiveCollapsed && (
               <div>
                 <div className="text-white font-semibold leading-5">{t('layout.brandName')}</div>
                 <div className="text-xs text-white/70">{t('layout.brandTag')}</div>
@@ -232,45 +257,51 @@ export default function BoLayout() {
             )}
           </div>
           <nav className="mt-1 flex flex-col gap-1">
-            {navItems.map((n) => (<SideLink key={n.to} to={n.to} icon={n.icon} collapsed={collapsed} label={t(`nav.${n.label}`)} />))}
+            {navItems.map((n) => (
+              <SideLink
+                key={n.to}
+                to={n.to}
+                icon={n.icon}
+                collapsed={effectiveCollapsed}
+                label={t(`nav.${n.label}`)}
+                onNavigate={mobileOpen ? () => setMobileOpen(false) : undefined}
+              />
+            ))}
           </nav>
           {/* Footer blocks */}
           <div className="mt-auto p-2">
-            <div className={`glass rounded-xl p-2 flex items-center ${collapsed ? "justify-center" : "gap-2"}`}>
+            <div className={`glass rounded-xl p-2 flex items-center ${effectiveCollapsed ? "justify-center" : "gap-2"}`}>
               {avatarUrl ? (
                 <img src={avatarUrl} alt="Avatar" className="h-8 w-8 rounded-full object-cover border border-white/20" />
               ) : (
                 <div className="h-8 w-8 rounded-full bg-white/10" />
               )}
-              {!collapsed && (
-                <div className="text-xs">
-                  <div className="text-white/90">{userName || "—"}</div>
-                  <div className="text-white/70">{t('layout.roleOwner')}</div>
-                </div>
-              )}
+              <div className="text-xs">
+                <div className="text-white/90">{userName || "—"}</div>
+                <div className="text-white/70">{t('layout.roleOwner')}</div>
+              </div>
             </div>
             <div className="mt-3">
               <button
                 onClick={handleSignOut}
                 disabled={signingOut}
-                className={`w-full bg-transparent shadow-none ring-0 border-0 p-0 text-sm flex items-center ${collapsed ? "justify-center" : "justify-start gap-2"} text-rose-400 hover:text-rose-300 transition ${signingOut ? "opacity-60" : ""}`}
+                className={`w-full bg-transparent shadow-none ring-0 border-0 p-0 text-sm flex items-center ${effectiveCollapsed ? "justify-center" : "justify-start gap-2"} text-rose-400 hover:text-rose-300 transition ${signingOut ? "opacity-60" : ""}`}
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                   <polyline points="16 17 21 12 16 7" />
                   <line x1="21" y1="12" x2="9" y2="12" />
                 </svg>
-                {!collapsed && (
-                  <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
-                )}
+                <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
               </button>
             </div>
           </div>
         </div>
+        </div>
         <button
           onClick={() => setCollapsed((v) => !v)}
           aria-label={collapsed ? t('common.expandSidebar') : t('common.collapseSidebar')}
-          className="absolute right-0 translate-x-1/2 top-1/2 -translate-y-1/2 z-50 h-9 w-9 rounded-full text-white flex items-center justify-center backdrop-blur glow shadow-2xl ring-2 ring-white/80 bg-gradient-to-tr from-brand-fuchsia to-brand-primary hover:brightness-110"
+          className="hidden md:flex absolute right-0 translate-x-1/2 top-1/2 -translate-y-1/2 z-50 h-9 w-9 rounded-full text-white items-center justify-center backdrop-blur glow shadow-2xl ring-2 ring-white/80 bg-gradient-to-tr from-brand-fuchsia to-brand-primary hover:brightness-110"
         >
           <svg className={`${collapsed ? "rotate-180" : ""} transition-transform duration-200 h-4 w-4 drop-shadow`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
@@ -288,7 +319,7 @@ export default function BoLayout() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        <main className="max-w-7xl mx-auto p-4 sm:p-6">
+        <main className="max-w-none mx-0 px-3 py-4 md:max-w-7xl md:mx-auto md:px-6 md:py-6">
           <Outlet />
         </main>
       </div>
