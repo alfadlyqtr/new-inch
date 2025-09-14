@@ -153,3 +153,46 @@
   pointer-events: none;
   animation: sheen-sweep 3.2s ease-in-out infinite;
 }
+
+/* Flash highlight when returning from create */
+@keyframes flash-ring {
+  0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); }
+  50% { box-shadow: 0 0 0 6px rgba(16,185,129,0.25); }
+  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.0); }
+}
+.flash-highlight {
+  outline: 2px solid #34d399; /* emerald-400 */
+  border-radius: 16px;
+  animation: flash-ring 1200ms ease-out 1;
+}
+
+/* Luxury VIP badge */
+.badge-vip {
+  position: relative;
+  background: linear-gradient(135deg, #FFF7D6 0%, #FDE68A 40%, #F59E0B 80%);
+  color: #1f2937;
+  border: 1px solid rgba(180, 83, 9, 0.55);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.1;
+  box-shadow:
+    0 0 0 1px rgba(253, 230, 138, 0.5) inset,
+    0 2px 8px rgba(217, 119, 6, 0.25);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+}
+.badge-vip::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.45) 50%, transparent 70%);
+  border-radius: 999px;
+  animation: vip-sheen 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes vip-sheen {
+  from { transform: translateX(-120%); opacity: 0.0; }
+  30%  { opacity: .6; }
+  70%  { opacity: .6; }
+  to   { transform: translateX(120%); opacity: 0.0; }
+}

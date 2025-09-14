@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react"
+import { useLocation, useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabaseClient.js"
 import { useCan, PermissionGate, Forbidden } from "../lib/permissions.jsx"
 import CustomerCard from "../components/customers/CustomerCard.jsx"
@@ -7,6 +8,8 @@ import { useTranslation } from 'react-i18next'
 
 export default function Customers() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
+  const location = useLocation()
   const canView = useCan('customers','view')
   const canCreate = useCan('customers','create')
   const canEdit = useCan('customers','edit')
@@ -17,6 +20,8 @@ export default function Customers() {
   const [search, setSearch] = useState("")
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [justCreated, setJustCreated] = useState(null)
+  const [justDeleted, setJustDeleted] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -34,6 +39,41 @@ export default function Customers() {
 
   useEffect(() => { if (ids.business_id && canView) load() }, [ids.business_id, canView])
 
+  // If navigated back from New Customer creation, show toast and ensure fresh data
+  useEffect(() => {
+    const created = location.state?.createdCustomer
+    if (created) {
+      ;(async () => {
+        await load()
+        setJustCreated(created)
+        // Clear navigation state so toast doesn't reappear on refresh/back
+        navigate(location.pathname, { replace: true })
+        // Auto-hide toast
+        setTimeout(() => setJustCreated(null), 2000)
+      })()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state])
+
+  // After list loads and we have justCreated, try to scroll and flash the card
+  useEffect(() => {
+    if (!justCreated || customers.length === 0) return
+    // find element by id or by data-phone/name fallback
+    const elById = justCreated.id ? document.querySelector(`[data-customer-id="${justCreated.id}"]`) : null
+    let target = elById
+    if (!target && justCreated.phone) {
+      target = document.querySelector(`[data-customer-phone="${justCreated.phone}"]`)
+    }
+    if (!target && justCreated.name) {
+      target = Array.from(document.querySelectorAll('[data-customer-name]')).find(el => el.getAttribute('data-customer-name') === justCreated.name)
+    }
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      target.classList.add('flash-highlight')
+      window.setTimeout(() => target.classList.remove('flash-highlight'), 1200)
+    }
+  }, [justCreated, customers])
+
   async function load() {
     setLoading(true)
     try {
@@ -41,6 +81,7 @@ export default function Customers() {
         .from('customers')
         .select('*')
         .eq('business_id', ids.business_id)
+        .is('preferences->>deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(200)
       if (error) throw error
@@ -49,6 +90,12 @@ export default function Customers() {
       console.error('load customers failed', e)
       setCustomers([])
     } finally { setLoading(false) }
+  }
+
+  function handleDeleted(id){
+    setCustomers(prev => prev.filter(c => c.id !== id))
+    setJustDeleted(true)
+    setTimeout(() => setJustDeleted(false), 1800)
   }
 
   const filtered = useMemo(() => {
@@ -60,7 +107,11 @@ export default function Customers() {
     )
   }, [customers, search])
 
-  function openCreate(){ setEditing(null); setFormOpen(true) }
+  function openCreate(){
+    const isStaff = location.pathname.startsWith('/staff')
+    const base = isStaff ? '/staff' : '/bo'
+    navigate(`${base}/customers/new`)
+  }
   function openEdit(c){ if (!canEdit) return; setEditing(c); setFormOpen(true) }
 
   async function handleSave(formData){
@@ -86,7 +137,19 @@ export default function Customers() {
   if (!canView) return <Forbidden module="customers" />
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {justCreated && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2">
+          <span className="text-xl">👍</span>
+          <span>Customer created</span>
+        </div>
+      )}
+      {justDeleted && (
+        <div className="fixed top-4 right-4 z-50 bg-rose-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2">
+          <span className="text-xl">🗑️</span>
+          <span>Customer deleted</span>
+        </div>
+      )}
       <div className="glass rounded-2xl border border-white/10 p-6">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -115,7 +178,9 @@ export default function Customers() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map(c => (
-              <CustomerCard key={c.id} c={c} onEdit={openEdit} />
+              <div key={c.id} data-customer-id={c.id} data-customer-phone={c.phone || ''} data-customer-name={c.name || ''}>
+                <CustomerCard c={c} onEdit={openEdit} onDeleted={handleDeleted} />
+              </div>
             ))}
           </div>
         )}

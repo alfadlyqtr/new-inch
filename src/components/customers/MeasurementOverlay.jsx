@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState } from "react"
   - values: { chest, waist, sleeve_length, neck, inseam, outseam, hips, shoulders, length }
   - onChange: (key, value) => void
 */
-export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate }) {
+export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate, unit = 'cm', allowedFixedKeys = null, extraFixed = [] }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(null)
   const [src, setSrc] = useState(imageUrl)
@@ -78,6 +78,14 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
     const d = fixedDefaults[key]
     return at(p?.x ?? d.x, p?.y ?? d.y)
   }
+  function posExtra(key, def){
+    const p = fixedPositions?.[key]
+    const d = def || { x: 50, y: 50 }
+    return at(p?.x ?? d.x, p?.y ?? d.y)
+  }
+  function shouldShow(key){
+    return !allowedFixedKeys || allowedFixedKeys.includes(key)
+  }
   function beginDragFixed(e, key){
     e.preventDefault(); e.stopPropagation();
     dragRef.current = { id: `fixed:${key}`, key }
@@ -100,7 +108,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
     const yPct = ((clickY - box.top) / box.h) * 100
     let label = window.prompt('Label name (e.g., Bicep, Wrist, Back Length):')
     if (!label) return
-    onAddPoint?.({ id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`, label: label.trim(), xPct, yPct, value: '', unit: 'cm' })
+    onAddPoint?.({ id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`, label: label.trim(), xPct, yPct, value: '', unit })
   }
 
   function beginDrag(e, p){
@@ -157,60 +165,71 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           </div>
         )}
 
-        {/* Neck (collar center) */}
-        <div className="absolute" style={pos('neck')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'neck') : null}>
-          <LabeledBox label="Neck">
-            <Input value={v('neck')} onChange={set('neck')} />
-          </LabeledBox>
-        </div>
-        {/* Shoulders (across shoulder line) */}
-        <div className="absolute" style={pos('shoulders')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'shoulders') : null}>
-          <LabeledBox label="Shoulders">
-            <Input value={v('shoulders')} onChange={set('shoulders')} />
-          </LabeledBox>
-        </div>
-        {/* Chest (Ch marker on right panel) */}
-        <div className="absolute" style={pos('chest')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'chest') : null}>
-          <LabeledBox label="Chest (Ch)">
-            <Input value={v('chest')} onChange={set('chest')} />
-          </LabeledBox>
-        </div>
-        {/* Waist (W marker lower right) */}
-        <div className="absolute" style={pos('waist')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'waist') : null}>
-          <LabeledBox label="Waist (W)">
-            <Input value={v('waist')} onChange={set('waist')} />
-          </LabeledBox>
-        </div>
-        {/* Sleeve length (left sleeve) */}
-        <div className="absolute" style={pos('sleeve_length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'sleeve_length') : null}>
-          <LabeledBox label="Sleeve">
-            <Input value={v('sleeve_length')} onChange={set('sleeve_length')} />
-          </LabeledBox>
-        </div>
-        {/* Hips (lower torso center-left) */}
-        <div className="absolute" style={pos('hips')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'hips') : null}>
-          <LabeledBox label="Hips">
-            <Input value={v('hips')} onChange={set('hips')} />
-          </LabeledBox>
-        </div>
-        {/* Length (hem) */}
-        <div className="absolute" style={pos('length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'length') : null}>
-          <LabeledBox label="Length">
-            <Input value={v('length')} onChange={set('length')} />
-          </LabeledBox>
-        </div>
+        {/* Built-in fixed labels (conditionally shown) */}
+        {shouldShow('neck') && (
+          <div className="absolute" style={pos('neck')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'neck') : null}>
+            <LabeledBox label="Neck" drag={moveFixed}>
+              <Input value={v('neck')} onChange={set('neck')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('shoulders') && (
+          <div className="absolute" style={pos('shoulders')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'shoulders') : null}>
+            <LabeledBox label="Shoulders" drag={moveFixed}>
+              <Input value={v('shoulders')} onChange={set('shoulders')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('chest') && (
+          <div className="absolute" style={pos('chest')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'chest') : null}>
+            <LabeledBox label="Chest (Ch)" drag={moveFixed}>
+              <Input value={v('chest')} onChange={set('chest')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('waist') && (
+          <div className="absolute" style={pos('waist')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'waist') : null}>
+            <LabeledBox label="Waist (W)" drag={moveFixed}>
+              <Input value={v('waist')} onChange={set('waist')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('sleeve_length') && (
+          <div className="absolute" style={pos('sleeve_length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'sleeve_length') : null}>
+            <LabeledBox label="Sleeve" drag={moveFixed}>
+              <Input value={v('sleeve_length')} onChange={set('sleeve_length')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('hips') && (
+          <div className="absolute" style={pos('hips')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'hips') : null}>
+            <LabeledBox label="Hips" drag={moveFixed}>
+              <Input value={v('hips')} onChange={set('hips')} />
+            </LabeledBox>
+          </div>
+        )}
+        {shouldShow('length') && (
+          <div className="absolute" style={pos('length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'length') : null}>
+            <LabeledBox label="Length" drag={moveFixed}>
+              <Input value={v('length')} onChange={set('length')} />
+            </LabeledBox>
+          </div>
+        )}
+
+        {/* Extra diagram-specific fixed labels */}
+        {(extraFixed||[]).map((ef) => (
+          <div key={ef.key} className="absolute" style={posExtra(ef.key, ef.default)} onPointerDown={(e)=> moveFixed ? beginDragFixed(e, ef.key) : null}>
+            <LabeledBox label={ef.label || ef.key} drag={moveFixed}>
+              <Input value={v(ef.key)} onChange={(k=> (e)=> onChange?.(k, e.target.value))(ef.key)} />
+            </LabeledBox>
+          </div>
+        ))}
 
         {/* Custom points */}
         {(points||[]).map((p) => (
           <div key={p.id} className="absolute" style={at(p.xPct, p.yPct)} onClick={(e)=> e.stopPropagation()} onPointerDown={(e)=> isControl(e.target) ? null : beginDrag(e, p)}>
-            <LabeledBox label={p.label}>
-              <button title="Drag" onMouseDown={(e)=> beginDrag(e,p)} onPointerDown={(e)=> beginDrag(e,p)} className="-ml-1 mr-1 px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-[10px] text-white cursor-grab active:cursor-grabbing">⋮⋮</button>
+            <LabeledBox label={p.label} drag={true}>
               <Input value={p.value || ''} onChange={(e)=> onUpdatePoint?.({ ...p, value: e.target.value })} />
-              <select value={p.unit || 'cm'} onChange={(e)=> onUpdatePoint?.({ ...p, unit: e.target.value })} className="ml-1 rounded bg-white/5 border border-white/20 px-1 py-0.5 text-[10px] text-white">
-                <option value="cm">cm</option>
-                <option value="in">in</option>
-              </select>
-              <button title="Remove" onClick={()=> onRemovePoint?.(p)} className="ml-1 px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-[10px] text-red-200">×</button>
             </LabeledBox>
           </div>
         ))}
@@ -224,15 +243,16 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   )
 }
 
-function LabeledBox({ label, children }){
+function LabeledBox({ label, children, drag = false }){
   return (
-    <div className="flex items-center gap-2 bg-white/10 border border-white/20 rounded-md px-2 py-1 backdrop-blur-sm">
-      <span className="text-[11px] text-white/80 whitespace-nowrap">{label}</span>
+    <div className="flex items-center gap-2 bg-slate-800/90 border border-white/40 rounded-md px-2 py-1 shadow-md">
+      {drag && <span title="Drag" className="text-[12px] select-none cursor-grab">🤚</span>}
+      <span className="text-[11px] text-white whitespace-nowrap">{label}</span>
       {children}
     </div>
   )
 }
 
 function Input(props){
-  return <input {...props} className="w-16 rounded bg-white/5 border border-white/20 px-2 py-1 text-xs text-white focus:outline-none" />
+  return <input {...props} className="w-24 rounded bg-slate-900/80 border border-white/40 px-2 py-1 text-xs text-white focus:outline-none" />
 }
