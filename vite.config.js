@@ -9,6 +9,10 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
+        // Exclude very large measurement images from pre-cache to avoid Vercel build failure
+        globIgnores: ['**/measurements/**'],
+        // Increase MAX file size to avoid incidental overs
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,gif}'],
         runtimeCaching: [
           {
@@ -21,6 +25,15 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 365 // <== 1 year
               },
               // Note: cacheKeyWillBeUsed is not a valid Workbox runtimeCaching option and breaks Vercel build (AJV schema)
+            }
+          },
+          {
+            // Cache measurement images at runtime instead of pre-caching them
+            urlPattern: /\/measurements\//,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'measurements-images',
+              expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 30 }
             }
           }
         ]
