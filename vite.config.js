@@ -20,9 +20,7 @@ export default defineConfig({
                 maxEntries: 10,
                 maxAgeSeconds: 60 * 60 * 24 * 365 // <== 1 year
               },
-              cacheKeyWillBeUsed: async ({ request }) => {
-                return `${request.url}?${new Date().getTime()}`
-              }
+              // Note: cacheKeyWillBeUsed is not a valid Workbox runtimeCaching option and breaks Vercel build (AJV schema)
             }
           }
         ]
