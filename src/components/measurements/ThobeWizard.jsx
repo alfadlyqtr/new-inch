@@ -107,6 +107,12 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
     pocket_type: [],
   })
 
+  // Free-form notes for special instructions or multiple styles
+  const [notes, setNotes] = useState(() => initial.notes || '')
+
+  // Diagram annotations (e.g., dimension lines)
+  const [annotations, setAnnotations] = useState(() => initial.annotations || {})
+
   const MAIN_KEYS = ['neck','shoulders','chest','waist','sleeve_length','arm','length','chest_l']
   const COLLAR_KEYS = ['collar_width','collar_height','collar_curve','neck']
   // Side diagram shows only these four chips
@@ -195,6 +201,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
       fixedPositions: { main: fixedMain, collar: fixedCollar, side: fixedSide },
       points: { main: mainPoints, collar: collarPoints, side: sidePoints },
       unit,
+      notes,
+      annotations,
     }
     onDone?.({ measurements })
   }
@@ -289,6 +297,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } }
                 ,{ key: 'arm', label: 'Arm', default: { x: 28, y: 40 } }
               ]}
+              annotations={annotations}
+              onAnnotationsChange={setAnnotations}
             />
             <LabelsPanel
               title="Labels"
@@ -325,6 +335,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
                 { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
               ]}
+              annotations={annotations}
+              onAnnotationsChange={setAnnotations}
             />
             <LabelsPanel
               title="Labels"
@@ -361,6 +373,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
                 { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
               ]}
+              annotations={annotations}
+              onAnnotationsChange={setAnnotations}
             />
             <LabelsPanel
               title="Labels"
@@ -413,6 +427,16 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 <span>{(list||[]).join(', ') || '—'}</span>
               </div>
             ))}
+            <div className="mt-4">
+              <label className="block text-white/80 font-medium mb-1">Notes</label>
+              <textarea
+                value={notes}
+                onChange={(e)=> setNotes(e.target.value)}
+                placeholder="Notes about style variations, customer preferences, fabric, or special instructions"
+                className="w-full min-h-[90px] rounded-lg bg-white/5 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              />
+              <div className="text-[11px] text-white/50 mt-1">Use this area if the customer has multiple styles or any special requests.</div>
+            </div>
           </div>
         )}
       </div>

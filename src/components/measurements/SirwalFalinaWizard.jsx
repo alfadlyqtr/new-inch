@@ -60,6 +60,12 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
 
   const [savedMsg, setSavedMsg] = useState('')
 
+  // Free-form notes for special instructions or multiple styles
+  const [notes, setNotes] = useState(() => initial.notes || '')
+
+  // Diagram annotations (e.g., dimension lines)
+  const [annotations, setAnnotations] = useState(() => initial.annotations || {})
+
   // Unit conversion for all values & points
   useEffect(() => {
     const prev = prevUnitRef.current
@@ -86,6 +92,8 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
       unit,
       fixedPositions: { sirwal: fixedSirwal, falina: fixedFalina },
       points: { sirwal: sirwalPts, falina: falinaPts },
+      notes,
+      annotations,
     }
     onDone?.({ measurements })
   }
@@ -181,6 +189,8 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
                 { key: 'bottom_width', label: 'Bottom Width', default: DEFAULT_POS_SIRWAL.bottom_width },
                 { key: 'rise', label: 'Rise', default: DEFAULT_POS_SIRWAL.rise },
               ]}
+              annotations={annotations}
+              onAnnotationsChange={setAnnotations}
             />
             <LabelsPanel title="Labels" values={sirwalVals} setValues={setSirwalVals} points={sirwalPts} setPoints={setSirwalPts} unit={unit} panelRef={fieldsRef} defaultKeys={['waist','hips','outseam_length','bottom_width','rise']} />
           </div>
@@ -209,6 +219,8 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
                 { key: 'length', label: 'Length', default: DEFAULT_POS_FALINA.length },
                 { key: 'bottom_width', label: 'Bottom Width', default: DEFAULT_POS_FALINA.bottom_width },
               ]}
+              annotations={annotations}
+              onAnnotationsChange={setAnnotations}
             />
             <LabelsPanel title="Labels" values={falinaVals} setValues={setFalinaVals} points={falinaPts} setPoints={setFalinaPts} unit={unit} panelRef={fieldsRef} defaultKeys={['neck','chest','armhole_depth','length','bottom_width']} />
           </div>
@@ -219,6 +231,16 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
             <KeyVals obj={sirwalVals} />
             <div className="text-white/80 font-medium mt-4">Falina</div>
             <KeyVals obj={falinaVals} />
+            <div className="mt-4">
+              <label className="block text-white/80 font-medium mb-1">Notes</label>
+              <textarea
+                value={notes}
+                onChange={(e)=> setNotes(e.target.value)}
+                placeholder="Notes about multiple styles, trims, fabrics, delivery, etc."
+                className="w-full min-h-[90px] rounded-lg bg-white/5 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+              />
+              <div className="text-[11px] text-white/50 mt-1">Use this if the customer has more than one style or special instructions.</div>
+            </div>
           </div>
         )}
       </div>

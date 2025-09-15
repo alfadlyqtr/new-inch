@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState } from "react"
   - values: { chest, waist, sleeve_length, neck, inseam, outseam, hips, shoulders, length }
   - onChange: (key, value) => void
 */
-export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate, unit = 'cm', allowedFixedKeys = null, extraFixed = [] }) {
+export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate, unit = 'cm', allowedFixedKeys = null, extraFixed = [], annotations = {}, onAnnotationsChange }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(null)
   const [src, setSrc] = useState(imageUrl)
@@ -16,6 +16,26 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   const [imgNatural, setImgNatural] = useState({ w: 0, h: 0 })
   const [box, setBox] = useState({ left: 0, top: 0, w: 0, h: 0 }) // rendered image box inside container
   const dragRef = useRef({ id: null })
+  const [toolMode, setToolMode] = useState('none') // 'none' | 'dim' | 'circle' | 'arrow' | 'angle' | 'note'
+  const [dimDraft, setDimDraft] = useState(null) // { a:{xPct,yPct} }
+  const [circleDraft, setCircleDraft] = useState(null) // { c:{xPct,yPct} }
+  const [arrowDraft, setArrowDraft] = useState(null) // { a:{xPct,yPct} } then b
+  const [angleDraft, setAngleDraft] = useState(null) // { a:{}, b:{}, c?:{} }
+  const [selectedDimId, setSelectedDimId] = useState(null)
+  const [selectedCircleId, setSelectedCircleId] = useState(null)
+  const [selectedArrowId, setSelectedArrowId] = useState(null)
+  const [selectedAngleId, setSelectedAngleId] = useState(null)
+  const [selectedNoteId, setSelectedNoteId] = useState(null)
+  const [layers, setLayers] = useState({ labels: true, points: true, dims: true, circles: true, arrows: true, angles: true, notes: true })
+  const [showTools, setShowTools] = useState(false)
+  const [showLayers, setShowLayers] = useState(false)
+
+  // Safe accessors for annotations arrays
+  const aDims = () => Array.isArray(annotations?.dims) ? annotations.dims : []
+  const aCircles = () => Array.isArray(annotations?.circles) ? annotations.circles : []
+  const aArrows = () => Array.isArray(annotations?.arrows) ? annotations.arrows : []
+  const aAngles = () => Array.isArray(annotations?.angles) ? annotations.angles : []
+  const aNotes = () => Array.isArray(annotations?.notes) ? annotations.notes : []
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +116,99 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   }
 
   function handleClick(e){
+    // If neutral (no tool active) and clicking inside canvas but not on controls, clear selection for a clean UX
+    if (toolMode === 'none') {
+      if (!box.w || !box.h) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (x >= box.left && x <= box.left + box.w && y >= box.top && y <= box.top + box.h) {
+        if (!isControl(e.target)) {
+          setSelectedDimId(null); setSelectedCircleId(null); setSelectedArrowId(null); setSelectedAngleId(null); setSelectedNoteId(null)
+        }
+      }
+    }
+    // If in dimension tool mode, capture endpoints inside image box
+    if (toolMode === 'dim') {
+      if (!box.w || !box.h) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
+      const xPct = ((x - box.left) / box.w) * 100
+      const yPct = ((y - box.top) / box.h) * 100
+      if (!dimDraft) {
+        setDimDraft({ a: { xPct, yPct } })
+      } else {
+        const dim = { id: `dim:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, a: dimDraft.a, b: { xPct, yPct }, style: { dashed: false, arrowheads: true } }
+        const next = { ...(annotations||{}), dims: [ ...aDims(), dim ] }
+        onAnnotationsChange?.(next)
+        setDimDraft(null)
+        setToolMode('none')
+      }
+      return
+    }
+    // Arrow tool: single click places a short arrow you can adjust
+    if (toolMode === 'arrow') {
+      if (!box.w || !box.h) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
+      const xPct = ((x - box.left) / box.w) * 100
+      const yPct = ((y - box.top) / box.h) * 100
+      const a = { xPct, yPct }
+      const b = { xPct: xPct + 8, yPct } // short arrow ~8% width to the right
+      const ctrl = { xPct: (a.xPct + b.xPct)/2, yPct: (a.yPct + b.yPct)/2 }
+      const item = { id: `arrow:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, a, b, ctrl, curved: false, style: { dashed: false, arrowhead: true }, text: '' }
+      const next = { ...(annotations||{}), arrows: [ ...aArrows(), item ] }
+      onAnnotationsChange?.(next)
+      setToolMode('none')
+      return
+    }
+    // Angle tool: single click places a small adjustable arc template
+    if (toolMode === 'angle') {
+      if (!box.w || !box.h) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
+      const xPct = ((x - box.left) / box.w) * 100
+      const yPct = ((y - box.top) / box.h) * 100
+      const b = { xPct, yPct } // vertex at click
+      const a = { xPct: xPct - 6, yPct } // left arm
+      const c = { xPct: xPct, yPct: yPct - 6 } // top arm
+      const item = { id: `angle:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, a, b, c }
+      const next = { ...(annotations||{}), angles: [ ...aAngles(), item ] }
+      onAnnotationsChange?.(next)
+      setToolMode('none')
+      return
+    }
+    // Circle tool: first click = center, second = radius
+    if (toolMode === 'circle') {
+      if (!box.w || !box.h) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
+      const xPct = ((x - box.left) / box.w) * 100
+      const yPct = ((y - box.top) / box.h) * 100
+      if (!circleDraft) {
+        setCircleDraft({ c: { xPct, yPct } })
+      } else {
+        // compute radius using pixel space then convert to width percentage for consistency
+        const dxPx = ((xPct - circleDraft.c.xPct) / 100) * (box.w||1)
+        const dyPx = ((yPct - circleDraft.c.yPct) / 100) * (box.h||1)
+        const rPx = Math.sqrt(dxPx*dxPx + dyPx*dyPx)
+        const rPct = ((rPx / (box.w||1)) * 100)
+        const item = { id: `circle:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, c: circleDraft.c, rPct, note: '' }
+        const next = { ...(annotations||{}), circles: [ ...aCircles(), item ] }
+        onAnnotationsChange?.(next)
+        setCircleDraft(null)
+        setToolMode('none')
+      }
+      return
+    }
     if (!addMode) return
     if (isControl(e.target)) return
     if (!box.w || !box.h) return
@@ -132,8 +245,46 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
         const key = dragRef.current.key
         onFixedUpdate?.(key, { x: xPct, y: yPct })
       } else {
-        const p = (points||[]).find(pt => pt.id === id)
-        if (p) onUpdatePoint?.({ ...p, xPct, yPct })
+        if (String(id).startsWith('dim:')){
+          const dimId = dragRef.current.dimId
+          const handle = dragRef.current.handle // 'a' | 'b'
+          const dims = aDims().map(d => d.id===dimId ? ({ ...d, [handle]: { xPct, yPct } }) : d)
+          onAnnotationsChange?.({ ...(annotations||{}), dims })
+        } else if (String(id).startsWith('circle:')){
+          const circId = dragRef.current.circId
+          const handle = dragRef.current.handle // 'c' | 'r'
+          if (handle === 'c') {
+            const circles = aCircles().map(c => c.id===circId ? ({ ...c, c: { xPct, yPct } }) : c)
+            onAnnotationsChange?.({ ...(annotations||{}), circles })
+          } else if (handle === 'r') {
+            // radius based on distance from center
+            const cItem = aCircles().find(c => c.id===circId)
+            if (cItem) {
+              const dx = xPct - cItem.c.xPct
+              const dy = yPct - cItem.c.yPct
+              const rPct = Math.sqrt(dx*dx + dy*dy)
+              const circles = aCircles().map(c => c.id===circId ? ({ ...c, rPct }) : c)
+              onAnnotationsChange?.({ ...(annotations||{}), circles })
+            }
+          }
+        } else if (String(id).startsWith('arrow:')){
+          const arrowId = dragRef.current.arrowId
+          const handle = dragRef.current.handle // 'a' | 'b' | 'ctrl'
+          const arrows = aArrows().map(ar => ar.id===arrowId ? ({ ...ar, [handle]: { xPct, yPct } }) : ar)
+          onAnnotationsChange?.({ ...(annotations||{}), arrows })
+        } else if (String(id).startsWith('angle:')){
+          const angleId = dragRef.current.angleId
+          const handle = dragRef.current.handle // 'a' | 'b' | 'c'
+          const angles = aAngles().map(ag => ag.id===angleId ? ({ ...ag, [handle]: { xPct, yPct } }) : ag)
+          onAnnotationsChange?.({ ...(annotations||{}), angles })
+        } else if (String(id).startsWith('note:')){
+          const noteId = dragRef.current.noteId
+          const notes = aNotes().map(n => n.id===noteId ? ({ ...n, p: { xPct, yPct } }) : n)
+          onAnnotationsChange?.({ ...(annotations||{}), notes })
+        } else {
+          const p = (points||[]).find(pt => pt.id === id)
+          if (p) onUpdatePoint?.({ ...p, xPct, yPct })
+        }
       }
     }
     function onUp(){ dragRef.current = { id: null } }
@@ -149,10 +300,44 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
     }
   }, [box, points, onUpdatePoint])
 
+  // Keyboard shortcuts inside component scope
+  // Delete/Backspace: delete selected annotation. Esc: clear selection
+  useEffect(() => {
+    function onKey(e){
+      if (e.key === 'Escape'){
+        setSelectedDimId(null); setSelectedCircleId(null); setSelectedArrowId(null); setSelectedAngleId(null); setSelectedNoteId(null); return
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace'){
+        if (selectedDimId){
+          const dims = aDims().filter(x => x.id!==selectedDimId)
+          onAnnotationsChange?.({ ...(annotations||{}), dims }); setSelectedDimId(null); e.preventDefault(); return
+        }
+        if (selectedCircleId){
+          const circles = aCircles().filter(x => x.id!==selectedCircleId)
+          onAnnotationsChange?.({ ...(annotations||{}), circles }); setSelectedCircleId(null); e.preventDefault(); return
+        }
+        if (selectedArrowId){
+          const arrows = aArrows().filter(x => x.id!==selectedArrowId)
+          onAnnotationsChange?.({ ...(annotations||{}), arrows }); setSelectedArrowId(null); e.preventDefault(); return
+        }
+        if (selectedAngleId){
+          const angles = aAngles().filter(x => x.id!==selectedAngleId)
+          onAnnotationsChange?.({ ...(annotations||{}), angles }); setSelectedAngleId(null); e.preventDefault(); return
+        }
+        if (selectedNoteId){
+          const notes = aNotes().filter(x => x.id!==selectedNoteId)
+          onAnnotationsChange?.({ ...(annotations||{}), notes }); setSelectedNoteId(null); e.preventDefault(); return
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [annotations, selectedDimId, selectedCircleId, selectedArrowId, selectedAngleId, selectedNoteId])
+
   return (
     <div className="w-full mx-auto">
       {/* Aspect-ratio container (3/4) using padding-top so it reserves space even before image loads */}
-      <div ref={containerRef} onClick={handleClick} onDoubleClick={handleClick} className={`relative w-full bg-white/[0.02] border border-white/10 rounded-md overflow-hidden ${addMode ? 'cursor-crosshair' : 'cursor-default'}`} style={{ maxHeight: '70vh' }}>
+      <div ref={containerRef} onClick={handleClick} onDoubleClick={handleClick} className={`relative w-full bg-white/[0.02] border border-white/10 rounded-md overflow-hidden ${toolMode==='dim' ? 'cursor-crosshair' : (addMode ? 'cursor-crosshair' : 'cursor-default')}`} style={{ maxHeight: '70vh' }}>
         <div style={{ paddingTop: `${aspectPercent}%` }} />
         {/* Background garment image */}
         <img src={src} alt="Measurement guide" className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" style={{ display: loaded && !error ? 'block' : 'none' }} />
@@ -225,8 +410,126 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           </div>
         ))}
 
+        {/* SVG overlay for measures and annotations */}
+        <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${box.w||1} ${box.h||1}`} style={{ left: box.left, top: box.top, width: box.w, height: box.h }}>
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#93c5fd" />
+            </marker>
+          </defs>
+          {(layers.dims ? aDims() : []).map((d) => {
+            const ax = (d.a.xPct/100) * (box.w||1)
+            const ay = (d.a.yPct/100) * (box.h||1)
+            const bx = (d.b.xPct/100) * (box.w||1)
+            const by = (d.b.yPct/100) * (box.h||1)
+            const dx = bx-ax, dy = by-ay
+            const len = Math.sqrt(dx*dx + dy*dy)
+            const nx = dx/len, ny = dy/len
+            const tx = -ny, ty = nx
+            const tick = 6
+            const cx = (ax+bx)/2, cy=(ay+by)/2
+            const useArrow = d.style?.arrowheads
+            const dash = d.style?.dashed ? '4 3' : undefined
+            const autoLabel = formatLenUnits(len, annotations?.meta?.scalePxPerUnit, unit)
+            const label = (d.text && String(d.text).slice(0,4)) || autoLabel
+            return (
+              <g key={d.id} className="pointer-events-none">
+                <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#93c5fd" strokeWidth="2" strokeDasharray={dash} markerStart={useArrow? 'url(#arrowhead)' : undefined} markerEnd={useArrow? 'url(#arrowhead)' : undefined} />
+                {/* Ticks */}
+                <line x1={ax+tx*tick} y1={ay+ty*tick} x2={ax-tx*tick} y2={ay-ty*tick} stroke="#93c5fd" strokeWidth="2" />
+                <line x1={bx+tx*tick} y1={by+ty*tick} x2={bx-tx*tick} y2={by-ty*tick} stroke="#93c5fd" strokeWidth="2" />
+                {/* Label */}
+                <rect x={cx-20} y={cy-9} width="40" height="18" rx="3" fill={selectedDimId===d.id? 'rgba(59,130,246,0.35)' : 'rgba(15,23,42,0.9)'} stroke="rgba(255,255,255,0.5)" className="pointer-events-auto" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedDimId(d.id) }} />
+                <text x={cx} y={cy+4} textAnchor="middle" fontSize="10" fill="#fff" className="pointer-events-none">{label}</text>
+              </g>
+            )
+          })}
+          {(layers.circles ? aCircles() : []).map((c) => {
+            const cx = (c.c.xPct/100) * (box.w||1)
+            const cy = (c.c.yPct/100) * (box.h||1)
+            const r = (c.rPct/100) * (box.w||1)
+            return (
+              <g key={c.id}>
+                <circle cx={cx} cy={cy} r={Math.max(6, r)} fill="none" stroke="#fcd34d" strokeWidth="2" strokeDasharray="4 3" className="cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedCircleId(c.id) }} onDoubleClick={(e)=>{ e.stopPropagation(); const circles = aCircles().filter(x => x.id!==c.id); onAnnotationsChange?.({ ...(annotations||{}), circles }); setSelectedCircleId(null) }} />
+                {c.note && (
+                  <>
+                    <rect x={cx + r + 6} y={cy - 9} width="60" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
+                    <text x={cx + r + 36} y={cy+4} textAnchor="middle" fontSize="10" fill="#fff">{c.note}</text>
+                  </>
+                )}
+              </g>
+            )
+          })}
+          {(layers.arrows ? aArrows() : []).map((ar) => {
+            const ax = (ar.a.xPct/100) * (box.w||1)
+            const ay = (ar.a.yPct/100) * (box.h||1)
+            const bx = (ar.b.xPct/100) * (box.w||1)
+            const by = (ar.b.yPct/100) * (box.h||1)
+            const cx = (ar.ctrl.xPct/100) * (box.w||1)
+            const cy = (ar.ctrl.yPct/100) * (box.h||1)
+            const midx = ar.curved ? (0.5*(ax+2*cx+bx)/2) : ((ax+bx)/2)
+            const midy = ar.curved ? (0.5*(ay+2*cy+by)/2) : ((ay+by)/2)
+            const dash = ar.style?.dashed ? '4 3' : undefined
+            return (
+              <g key={ar.id} className="pointer-events-auto cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedArrowId(ar.id) }}>
+                {ar.curved ? (
+                  <path d={`M ${ax} ${ay} Q ${cx} ${cy} ${bx} ${by}`} stroke="#93c5fd" strokeWidth="2" strokeDasharray={dash} fill="none" markerEnd={ar.style?.arrowhead? 'url(#arrowhead)' : undefined} />
+                ) : (
+                  <line x1={ax} y1={ay} x2={bx} y2={by} stroke="#93c5fd" strokeWidth="2" strokeDasharray={dash} markerEnd={ar.style?.arrowhead? 'url(#arrowhead)' : undefined} />
+                )}
+                {ar.text && (
+                  <>
+                    <rect x={midx-20} y={midy-9} width="40" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
+                    <text x={midx} y={midy+4} textAnchor="middle" fontSize="10" fill="#fff">{ar.text}</text>
+                  </>
+                )}
+              </g>
+            )
+          })}
+          {(layers.angles ? aAngles() : []).map((ag) => {
+            const ax = (ag.a.xPct/100) * (box.w||1)
+            const ay = (ag.a.yPct/100) * (box.h||1)
+            const bx = (ag.b.xPct/100) * (box.w||1)
+            const by = (ag.b.yPct/100) * (box.h||1)
+            const cx = (ag.c.xPct/100) * (box.w||1)
+            const cy = (ag.c.yPct/100) * (box.h||1)
+            const v1x = ax - bx, v1y = ay - by
+            const v2x = cx - bx, v2y = cy - by
+            const ang = Math.acos(Math.max(-1, Math.min(1, ((v1x*v2x + v1y*v2y) / (Math.hypot(v1x,v1y)*Math.hypot(v2x,v2y) || 1)))))
+            const deg = Math.round(ang * 180 / Math.PI)
+            const r = 24
+            const a1 = Math.atan2(ay-by, ax-bx)
+            const a2 = Math.atan2(cy-by, cx-bx)
+            const large = 0
+            const sweep = (a2 - a1) > 0 ? 1 : 0
+            const sx = bx + r*Math.cos(a1)
+            const sy = by + r*Math.sin(a1)
+            const ex = bx + r*Math.cos(a2)
+            const ey = by + r*Math.sin(a2)
+            const lx = bx + (r+12)*Math.cos((a1+a2)/2)
+            const ly = by + (r+12)*Math.sin((a1+a2)/2)
+            return (
+              <g key={ag.id} className="pointer-events-auto cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedAngleId(ag.id) }}>
+                <path d={`M ${sx} ${sy} A ${r} ${r} 0 ${large} ${sweep} ${ex} ${ey}`} stroke="#93c5fd" strokeWidth="2" fill="none" />
+                <rect x={lx-16} y={ly-9} width="32" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
+                <text x={lx} y={ly+4} textAnchor="middle" fontSize="10" fill="#fff">{deg}°</text>
+              </g>
+            )
+          })}
+          {(layers.notes ? aNotes() : []).map((n) => {
+            const px = (n.p.xPct/100) * (box.w||1)
+            const py = (n.p.yPct/100) * (box.h||1)
+            return (
+              <g key={n.id} className="pointer-events-auto cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedNoteId(n.id) }}>
+                <rect x={px-24} y={py-9} width="48" height="18" rx="9" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
+                <text x={px} y={py+4} textAnchor="middle" fontSize="10" fill="#fff">{n.text || 'Note'}</text>
+              </g>
+            )
+          })}
+        </svg>
+
         {/* Custom points */}
-        {(points||[]).map((p) => (
+        {layers.points && (points||[]).map((p) => (
           <div key={p.id} className="absolute" style={at(p.xPct, p.yPct)} onClick={(e)=> e.stopPropagation()} onPointerDown={(e)=> isControl(e.target) ? null : beginDrag(e, p)}>
             <LabeledBox label={p.label} drag={true}>
               <Input value={p.value || ''} onChange={(e)=> onUpdatePoint?.({ ...p, value: e.target.value })} />
@@ -234,9 +537,242 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           </div>
         ))}
 
-        {!error && loaded && addMode && (
-          <div className="absolute right-2 top-2 text-[11px] px-2 py-1 rounded bg-white/10 border border-white/20 text-white/80">Click image to add label</div>
+        {/* Drag handles for dimension endpoints (pointer-events enabled) */}
+        {layers.dims && aDims().map((d) => (
+          <>
+            {selectedDimId===d.id && (
+              <>
+                <div key={`${d.id}-a`} className="absolute" style={at(d.a.xPct, d.a.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `dim:${d.id}`, dimId: d.id, handle:'a' } }}>
+                  <Handle />
+                </div>
+                <div key={`${d.id}-b`} className="absolute" style={at(d.b.xPct, d.b.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `dim:${d.id}`, dimId: d.id, handle:'b' } }}>
+                  <Handle />
+                </div>
+              </>
+            )}
+          </>
+        ))}
+        {/* Drag handles for circle center and radius */}
+        {layers.circles && aCircles().map((c) => (
+          <>
+            {selectedCircleId===c.id && (
+              <>
+                <div key={`${c.id}-c`} className="absolute" style={at(c.c.xPct, c.c.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `circle:${c.id}`, circId: c.id, handle:'c' } }}>
+                  <Handle />
+                </div>
+                <div key={`${c.id}-r`} className="absolute" style={at(c.c.xPct + c.rPct, c.c.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `circle:${c.id}`, circId: c.id, handle:'r' } }}>
+                  <Handle />
+                </div>
+              </>
+            )}
+          </>
+        ))}
+        {/* Drag handles for arrows */}
+        {layers.arrows && aArrows().map((ar) => (
+          <>
+            {selectedArrowId===ar.id && (
+              <>
+                <div key={`${ar.id}-a`} className="absolute" style={at(ar.a.xPct, ar.a.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `arrow:${ar.id}`, arrowId: ar.id, handle:'a' } }}>
+                  <Handle />
+                </div>
+                {ar.curved && (
+                  <div key={`${ar.id}-ctrl`} className="absolute" style={at(ar.ctrl.xPct, ar.ctrl.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `arrow:${ar.id}`, arrowId: ar.id, handle:'ctrl' } }}>
+                    <Handle />
+                  </div>
+                )}
+                <div key={`${ar.id}-b`} className="absolute" style={at(ar.b.xPct, ar.b.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `arrow:${ar.id}`, arrowId: ar.id, handle:'b' } }}>
+                  <Handle />
+                </div>
+              </>
+            )}
+          </>
+        ))}
+        {/* Drag handles for angles */}
+        {layers.angles && aAngles().map((ag) => (
+          <>
+            {selectedAngleId===ag.id && (
+              <>
+                <div key={`${ag.id}-a`} className="absolute" style={at(ag.a.xPct, ag.a.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `angle:${ag.id}`, angleId: ag.id, handle:'a' } }}>
+                  <Handle />
+                </div>
+                <div key={`${ag.id}-b`} className="absolute" style={at(ag.b.xPct, ag.b.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `angle:${ag.id}`, angleId: ag.id, handle:'b' } }}>
+                  <Handle />
+                </div>
+                <div key={`${ag.id}-c`} className="absolute" style={at(ag.c.xPct, ag.c.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `angle:${ag.id}`, angleId: ag.id, handle:'c' } }}>
+                  <Handle />
+                </div>
+              </>
+            )}
+          </>
+        ))}
+        {/* Drag handles for note pills */}
+        {layers.notes && aNotes().map((n) => (
+          selectedNoteId===n.id ? (
+            <div key={`${n.id}-p`} className="absolute" style={at(n.p.xPct, n.p.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); dragRef.current = { id: `note:${n.id}`, noteId: n.id } }}>
+              <Handle />
+            </div>
+          ) : null
+        ))}
+
+        {!error && loaded && (
+          <div className="absolute right-2 top-2 flex items-center gap-2">
+            <div className="relative">
+              <button type="button" onClick={()=> { setShowTools(o=>!o); setShowLayers(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/20 text-white/80">Tools ▾</button>
+              {showTools && (
+                <div className="absolute right-0 mt-1 w-44 rounded border border-white/20 bg-slate-900/95 p-2 shadow-xl space-y-1">
+                  <div className="text-[10px] text-white/60 px-1">Add</div>
+                  <div className="grid grid-cols-2 gap-1">
+                    <button onClick={()=> { setToolMode('dim'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Dimension</button>
+                    <button onClick={()=> { setToolMode('circle'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Circle</button>
+                    <button onClick={()=> { setToolMode('arrow'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Arrow</button>
+                    <button onClick={()=> { setToolMode('angle'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Angle</button>
+                    <button onClick={()=> { setToolMode('note'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Note</button>
+                  </div>
+                  {(toolMode==='dim' || toolMode==='circle' || toolMode==='arrow' || toolMode==='angle' || toolMode==='note') && (
+                    <div className="text-[10px] text-sky-200 bg-sky-500/10 border border-sky-400/30 rounded px-2 py-1 mt-1">
+                      {toolMode==='dim' && 'Click start then end'}
+                      {toolMode==='circle' && 'Click center then radius'}
+                      {toolMode==='arrow' && 'Click to place'}
+                      {toolMode==='angle' && 'Click to place'}
+                      {toolMode==='note' && 'Click to place'}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-white/60 px-1 mt-1">Scale</div>
+                  <div className="flex items-center gap-1 px-1">
+                    <span className="text-[10px] text-white/70">px/{unit}</span>
+                    <input type="number" min="0" step="0.1" value={annotations?.meta?.scalePxPerUnit ?? ''} placeholder="scale" onChange={(e)=> { const v = e.target.value === '' ? undefined : parseFloat(e.target.value); const meta = { ...(annotations?.meta||{}), scalePxPerUnit: Number.isFinite(v) ? v : undefined }; onAnnotationsChange?.({ ...(annotations||{}), meta }) }} className="w-16 bg-white/10 border border-white/20 rounded px-1 py-0.5 text-[11px] text-white focus:outline-none" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button type="button" onClick={()=> { setShowLayers(o=>!o); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/20 text-white/80">Layers ▾</button>
+              {showLayers && (
+                <div className="absolute right-0 mt-1 w-60 rounded border border-white/20 bg-slate-900/95 p-2 shadow-xl space-y-2">
+                  <div className="grid grid-cols-3 gap-1">
+                    <button onClick={()=> setLayers(s=> ({...s, labels: !s.labels}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.labels? 'bg-white/20':'bg-white/10'} text-white/80`}>Labels</button>
+                    <button onClick={()=> setLayers(s=> ({...s, points: !s.points}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.points? 'bg-white/20':'bg-white/10'} text-white/80`}>Points</button>
+                    <button onClick={()=> setLayers(s=> ({...s, dims: !s.dims}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.dims? 'bg-white/20':'bg-white/10'} text-white/80`}>Dims</button>
+                    <button onClick={()=> setLayers(s=> ({...s, circles: !s.circles}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.circles? 'bg-white/20':'bg-white/10'} text-white/80`}>Circles</button>
+                    <button onClick={()=> setLayers(s=> ({...s, arrows: !s.arrows}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.arrows? 'bg-white/20':'bg-white/10'} text-white/80`}>Arrows</button>
+                    <button onClick={()=> setLayers(s=> ({...s, angles: !s.angles}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.angles? 'bg-white/20':'bg-white/10'} text-white/80`}>Angles</button>
+                    <button onClick={()=> setLayers(s=> ({...s, notes: !s.notes}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.notes? 'bg-white/20':'bg-white/10'} text-white/80`}>Notes</button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={()=> { setLayers({ labels: true, points: false, dims: true, circles: true, arrows: true, angles: true, notes: true }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Show All</button>
+                    <button onClick={()=> { setLayers({ labels: true, points: false, dims: false, circles: false, arrows: false, angles: false, notes: false }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Labels Only</button>
+                    <button onClick={()=> { setLayers({ labels: false, points: false, dims: true, circles: true, arrows: true, angles: true, notes: true }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Measures Only</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
+
+        {/* Selected dimension quick actions */}
+        {selectedDimId && (()=>{
+          const d = aDims().find(x => x.id===selectedDimId)
+          if (!d) return null
+          const ax = (d.a.xPct/100) * (box.w||1)
+          const ay = (d.a.yPct/100) * (box.h||1)
+          const bx = (d.b.xPct/100) * (box.w||1)
+          const by = (d.b.yPct/100) * (box.h||1)
+          const cx = box.left + (ax+bx)/2
+          const cy = box.top + (ay+by)/2 - 24
+          return (
+            <div className="absolute flex items-center gap-1" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
+              <button onClick={()=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, style: { ...(x.style||{}), dashed: !x.style?.dashed } }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Dash</button>
+              <button onClick={()=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, style: { ...(x.style||{}), arrowheads: !x.style?.arrowheads } }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Arrows</button>
+              <input maxLength={4} placeholder="#" value={d.text ?? ''} onChange={(e)=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, text: e.target.value }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="w-12 text-center bg-white/10 border border-white/20 rounded px-1 py-0.5 text-[10px] text-white" title="Manual label (max 4)" />
+              <button onClick={()=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, text: undefined }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Auto</button>
+              {/* Trash icon */}
+              <button onClick={()=>{ const dims = aDims().filter(x => x.id!==d.id); onAnnotationsChange?.({ ...(annotations||{}), dims }); setSelectedDimId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
+              <button onClick={()=> setSelectedDimId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
+            </div>
+          )
+        })()}
+
+        {/* Selected arrow quick actions */}
+        {selectedArrowId && (()=>{
+          const ar = aArrows().find(x => x.id===selectedArrowId)
+          if (!ar) return null
+          const ax = (ar.a.xPct/100) * (box.w||1)
+          const ay = (ar.a.yPct/100) * (box.h||1)
+          const bx = (ar.b.xPct/100) * (box.w||1)
+          const by = (ar.b.yPct/100) * (box.h||1)
+          const cx = box.left + (ax+bx)/2
+          const cy = box.top + (ay+by)/2 - 24
+          return (
+            <div className="absolute flex items-center gap-1" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
+              <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, style: { ...(x.style||{}), dashed: !x.style?.dashed } }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Dash</button>
+              <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, style: { ...(x.style||{}), arrowhead: !x.style?.arrowhead } }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Head</button>
+              <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, curved: !x.curved }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Curved</button>
+              <input maxLength={24} placeholder="text" value={ar.text ?? ''} onChange={(e)=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, text: e.target.value }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="w-24 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white" />
+              {/* Trash icon */}
+              <button onClick={()=>{ const arrows = aArrows().filter(x => x.id!==ar.id); onAnnotationsChange?.({ ...(annotations||{}), arrows }); setSelectedArrowId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
+              <button onClick={()=> setSelectedArrowId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
+            </div>
+          )
+        })()}
+
+        {/* Selected angle quick actions */}
+        {selectedAngleId && (()=>{
+          const ag = aAngles().find(x => x.id===selectedAngleId)
+          if (!ag) return null
+          const bx = box.left + (ag.b.xPct/100) * (box.w||1)
+          const by = box.top + (ag.b.yPct/100) * (box.h||1) - 24
+          return (
+            <div className="absolute flex items-center gap-1" style={{ left: bx, top: by, transform: 'translate(-50%, -50%)' }}>
+              {/* Trash icon */}
+              <button onClick={()=>{ const angles = aAngles().filter(x => x.id!==ag.id); onAnnotationsChange?.({ ...(annotations||{}), angles }); setSelectedAngleId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
+              <button onClick={()=> setSelectedAngleId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
+            </div>
+          )
+        })()}
+
+        {/* Selected note quick actions */}
+        {selectedNoteId && (()=>{
+          const n = aNotes().find(x => x.id===selectedNoteId)
+          if (!n) return null
+          const px = box.left + (n.p.xPct/100) * (box.w||1)
+          const py = box.top + (n.p.yPct/100) * (box.h||1) - 24
+          return (
+            <div className="absolute flex items-center gap-1" style={{ left: px, top: py, transform: 'translate(-50%, -50%)' }}>
+              <input maxLength={10} value={n.text || ''} onChange={(e)=>{ const val = e.target.value.slice(0,10); const words = val.split(/\s+/).slice(0,3).join(' '); const notes = aNotes().map(x => x.id===n.id ? ({ ...x, text: words }) : x); onAnnotationsChange?.({ ...(annotations||{}), notes }) }} className="w-28 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white" placeholder="note" />
+              {/* Trash icon */}
+              <button onClick={()=>{ const notes = aNotes().filter(x => x.id!==n.id); onAnnotationsChange?.({ ...(annotations||{}), notes }); setSelectedNoteId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
+              <button onClick={()=> setSelectedNoteId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
+            </div>
+          )
+        })()}
+
+        {/* Selected circle quick actions */}
+        {selectedCircleId && (()=>{
+          const c = aCircles().find(x => x.id===selectedCircleId)
+          if (!c) return null
+          const cxPx = box.left + (c.c.xPct/100) * (box.w||1)
+          const cyPx = box.top + (c.c.yPct/100) * (box.h||1) - 24
+          return (
+            <div className="absolute flex items-center gap-1" style={{ left: cxPx, top: cyPx, transform: 'translate(-50%, -50%)' }}>
+              <input
+                maxLength={24}
+                placeholder="note"
+                value={c.note ?? ''}
+                onChange={(e)=>{
+                  const circles = aCircles().map(x => x.id===c.id ? ({ ...x, note: e.target.value }) : x)
+                  onAnnotationsChange?.({ ...(annotations||{}), circles })
+                }}
+                className="w-28 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white"
+              />
+              <button onClick={()=>{
+                const circles = aCircles().filter(x => x.id!==c.id)
+                onAnnotationsChange?.({ ...(annotations||{}), circles })
+                setSelectedCircleId(null)
+              }} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 border border-red-400/40 text-red-100">Delete</button>
+              <button onClick={()=> setSelectedCircleId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
+            </div>
+          )
+        })()}
       </div>
       <div className="text-xs text-slate-400 mt-2">Tip: values accept numbers; units are managed in the form (cm/in).</div>
     </div>
@@ -245,14 +781,43 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
 
 function LabeledBox({ label, children, drag = false }){
   return (
-    <div className="flex items-center gap-2 bg-slate-800/90 border border-white/40 rounded-md px-2 py-1 shadow-md">
-      {drag && <span title="Drag" className="text-[12px] select-none cursor-grab">🤚</span>}
-      <span className="text-[11px] text-white whitespace-nowrap">{label}</span>
+    <div className="flex items-center gap-1 bg-slate-800/90 border border-white/40 rounded-md px-1.5 py-0.5 shadow-md">
+      {drag && <span title="Drag" className="text-[11px] leading-none select-none cursor-grab">🤚</span>}
+      <span className="text-[10px] leading-none text-white whitespace-nowrap">{label}</span>
       {children}
     </div>
   )
 }
 
 function Input(props){
-  return <input {...props} className="w-24 rounded bg-slate-900/80 border border-white/40 px-2 py-1 text-xs text-white focus:outline-none" />
+  const { className = '', maxLength, inputMode, ...rest } = props
+  return (
+    <input
+      {...rest}
+      maxLength={maxLength ?? 4}
+      inputMode={inputMode ?? 'decimal'}
+      className={`w-[6ch] sm:w-[6.5ch] text-center rounded bg-slate-900/80 border border-white/40 px-1 py-0.5 text-[11px] text-white focus:outline-none ${className}`}
+    />
+  )
+}
+
+// Small draggable handle for dimension endpoints
+function Handle(){
+  return (
+    <div className="w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-300 border border-sky-500 shadow" />
+  )
+}
+
+// Simple pixel-length formatter for dimension labels
+function formatLen(px){
+  const v = Math.round(px)
+  return `${v}`
+}
+
+function formatLenUnits(px, scalePxPerUnit, unit){
+  if (!scalePxPerUnit || !Number.isFinite(scalePxPerUnit) || scalePxPerUnit <= 0) return formatLen(px)
+  const val = px / scalePxPerUnit
+  // show up to 1 decimal for readability
+  const n = Math.round(val * 10) / 10
+  return `${n}${unit}`
 }
