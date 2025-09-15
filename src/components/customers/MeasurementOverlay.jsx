@@ -26,7 +26,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   const [selectedArrowId, setSelectedArrowId] = useState(null)
   const [selectedAngleId, setSelectedAngleId] = useState(null)
   const [selectedNoteId, setSelectedNoteId] = useState(null)
-  const [layers, setLayers] = useState({ labels: true, points: true, dims: true, circles: true, arrows: true, angles: true, notes: true })
+  const [layers, setLayers] = useState({ labels: true, points: true, dims: true, circles: true, arrows: true, angles: false, notes: false })
   const [showTools, setShowTools] = useState(false)
   const [showLayers, setShowLayers] = useState(false)
 
@@ -112,23 +112,21 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   }
 
   function isControl(el){
-    return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'BUTTON' || el.closest('button') || el.closest('select') || el.closest('input')
+    return (
+      el.tagName === 'INPUT' ||
+      el.tagName === 'SELECT' ||
+      el.tagName === 'BUTTON' ||
+      el.closest('button') ||
+      el.closest('select') ||
+      el.closest('input') ||
+      el.closest('[data-control="true"]')
+    )
   }
 
   function handleClick(e){
-    // If neutral (no tool active) and clicking inside canvas but not on controls, clear selection for a clean UX
-    if (toolMode === 'none') {
-      if (!box.w || !box.h) return
-      const rect = containerRef.current.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      if (x >= box.left && x <= box.left + box.w && y >= box.top && y <= box.top + box.h) {
-        if (!isControl(e.target)) {
-          setSelectedDimId(null); setSelectedCircleId(null); setSelectedArrowId(null); setSelectedAngleId(null); setSelectedNoteId(null)
-        }
-      }
-    }
-    // If in dimension tool mode, capture endpoints inside image box
+    // Outside clicks should NOT close any measurement pop/controls.
+    // Keep selection as-is unless user hits explicit Close/Save on the control itself.
+    // Dimension tool: single click places a short segment you can adjust
     if (toolMode === 'dim') {
       if (!box.w || !box.h) return
       const rect = containerRef.current.getBoundingClientRect()
@@ -137,15 +135,13 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
       if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
       const xPct = ((x - box.left) / box.w) * 100
       const yPct = ((y - box.top) / box.h) * 100
-      if (!dimDraft) {
-        setDimDraft({ a: { xPct, yPct } })
-      } else {
-        const dim = { id: `dim:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, a: dimDraft.a, b: { xPct, yPct }, style: { dashed: false, arrowheads: true } }
-        const next = { ...(annotations||{}), dims: [ ...aDims(), dim ] }
-        onAnnotationsChange?.(next)
-        setDimDraft(null)
-        setToolMode('none')
-      }
+      const a = { xPct, yPct }
+      const b = { xPct: xPct + 8, yPct }
+      const dim = { id: `dim:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, a, b, style: { dashed: false, arrowheads: true } }
+      const next = { ...(annotations||{}), dims: [ ...aDims(), dim ] }
+      onAnnotationsChange?.(next)
+      setToolMode('none')
+      setSelectedDimId(dim.id)
       return
     }
     // Arrow tool: single click places a short arrow you can adjust
@@ -164,6 +160,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
       const next = { ...(annotations||{}), arrows: [ ...aArrows(), item ] }
       onAnnotationsChange?.(next)
       setToolMode('none')
+      setSelectedArrowId(item.id)
       return
     }
     // Angle tool: single click places a small adjustable arc template
@@ -182,9 +179,10 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
       const next = { ...(annotations||{}), angles: [ ...aAngles(), item ] }
       onAnnotationsChange?.(next)
       setToolMode('none')
+      setSelectedAngleId(item.id)
       return
     }
-    // Circle tool: first click = center, second = radius
+    // Circle tool: single click places with a default radius (adjust with slider or handle)
     if (toolMode === 'circle') {
       if (!box.w || !box.h) return
       const rect = containerRef.current.getBoundingClientRect()
@@ -193,20 +191,12 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
       if (x < box.left || x > box.left + box.w || y < box.top || y > box.top + box.h) return
       const xPct = ((x - box.left) / box.w) * 100
       const yPct = ((y - box.top) / box.h) * 100
-      if (!circleDraft) {
-        setCircleDraft({ c: { xPct, yPct } })
-      } else {
-        // compute radius using pixel space then convert to width percentage for consistency
-        const dxPx = ((xPct - circleDraft.c.xPct) / 100) * (box.w||1)
-        const dyPx = ((yPct - circleDraft.c.yPct) / 100) * (box.h||1)
-        const rPx = Math.sqrt(dxPx*dxPx + dyPx*dyPx)
-        const rPct = ((rPx / (box.w||1)) * 100)
-        const item = { id: `circle:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, c: circleDraft.c, rPct, note: '' }
-        const next = { ...(annotations||{}), circles: [ ...aCircles(), item ] }
-        onAnnotationsChange?.(next)
-        setCircleDraft(null)
-        setToolMode('none')
-      }
+      const defaultR = 10 // percent of width
+      const item = { id: `circle:${Date.now()}-${Math.random().toString(36).slice(2,6)}`, c: { xPct, yPct }, rPct: defaultR, note: '' }
+      const next = { ...(annotations||{}), circles: [ ...aCircles(), item ] }
+      onAnnotationsChange?.(next)
+      setToolMode('none')
+      setSelectedCircleId(item.id)
       return
     }
     if (!addMode) return
@@ -231,60 +221,103 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
 
   useEffect(() => {
     function onMove(e){
-      const id = dragRef.current.id
-      if (!id || !box.w || !box.h) return
+      if (!dragRef.current?.id) return
+      if (!box.w || !box.h) return
       const rect = containerRef.current.getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
-      // clamp to box
-      const cx = Math.max(box.left, Math.min(x, box.left + box.w))
-      const cy = Math.max(box.top, Math.min(y, box.top + box.h))
-      const xPct = ((cx - box.left) / box.w) * 100
-      const yPct = ((cy - box.top) / box.h) * 100
+      const xPct = ((x - box.left) / (box.w||1)) * 100
+      const yPct = ((y - box.top) / (box.h||1)) * 100
+      const clamp = (v)=> Math.max(0, Math.min(100, v))
+      const { id } = dragRef.current
       if (String(id).startsWith('fixed:')){
         const key = dragRef.current.key
-        onFixedUpdate?.(key, { x: xPct, y: yPct })
-      } else {
-        if (String(id).startsWith('dim:')){
-          const dimId = dragRef.current.dimId
-          const handle = dragRef.current.handle // 'a' | 'b'
-          const dims = aDims().map(d => d.id===dimId ? ({ ...d, [handle]: { xPct, yPct } }) : d)
-          onAnnotationsChange?.({ ...(annotations||{}), dims })
-        } else if (String(id).startsWith('circle:')){
-          const circId = dragRef.current.circId
-          const handle = dragRef.current.handle // 'c' | 'r'
-          if (handle === 'c') {
-            const circles = aCircles().map(c => c.id===circId ? ({ ...c, c: { xPct, yPct } }) : c)
-            onAnnotationsChange?.({ ...(annotations||{}), circles })
-          } else if (handle === 'r') {
-            // radius based on distance from center
-            const cItem = aCircles().find(c => c.id===circId)
-            if (cItem) {
-              const dx = xPct - cItem.c.xPct
-              const dy = yPct - cItem.c.yPct
-              const rPct = Math.sqrt(dx*dx + dy*dy)
-              const circles = aCircles().map(c => c.id===circId ? ({ ...c, rPct }) : c)
-              onAnnotationsChange?.({ ...(annotations||{}), circles })
-            }
-          }
-        } else if (String(id).startsWith('arrow:')){
-          const arrowId = dragRef.current.arrowId
-          const handle = dragRef.current.handle // 'a' | 'b' | 'ctrl'
-          const arrows = aArrows().map(ar => ar.id===arrowId ? ({ ...ar, [handle]: { xPct, yPct } }) : ar)
-          onAnnotationsChange?.({ ...(annotations||{}), arrows })
-        } else if (String(id).startsWith('angle:')){
-          const angleId = dragRef.current.angleId
-          const handle = dragRef.current.handle // 'a' | 'b' | 'c'
-          const angles = aAngles().map(ag => ag.id===angleId ? ({ ...ag, [handle]: { xPct, yPct } }) : ag)
-          onAnnotationsChange?.({ ...(annotations||{}), angles })
-        } else if (String(id).startsWith('note:')){
-          const noteId = dragRef.current.noteId
-          const notes = aNotes().map(n => n.id===noteId ? ({ ...n, p: { xPct, yPct } }) : n)
-          onAnnotationsChange?.({ ...(annotations||{}), notes })
+        onFixedUpdate?.(key, { x: clamp(xPct), y: clamp(yPct) })
+      } else if (String(id).startsWith('dim:')){
+        const dimId = dragRef.current.dimId
+        const handle = dragRef.current.handle // 'a' | 'b' | 'move'
+        let dims
+        if (handle === 'move'){
+          const { start, orig } = dragRef.current
+          const dx = xPct - start.xPct
+          const dy = yPct - start.yPct
+          dims = aDims().map(d => d.id===dimId ? ({
+            ...d,
+            a: { xPct: clamp(orig.a.xPct + dx), yPct: clamp(orig.a.yPct + dy) },
+            b: { xPct: clamp(orig.b.xPct + dx), yPct: clamp(orig.b.yPct + dy) },
+          }) : d)
         } else {
-          const p = (points||[]).find(pt => pt.id === id)
-          if (p) onUpdatePoint?.({ ...p, xPct, yPct })
+          dims = aDims().map(d => d.id===dimId ? ({ ...d, [handle]: { xPct: clamp(xPct), yPct: clamp(yPct) } }) : d)
         }
+        onAnnotationsChange?.({ ...(annotations||{}), dims })
+      } else if (String(id).startsWith('circle:')){
+        const circId = dragRef.current.circId
+        const handle = dragRef.current.handle // 'c' | 'r' | 'move'
+        if (handle === 'c' || handle==='move'){
+          const base = dragRef.current.origC || null
+          if (handle==='move' && base){
+            const dx = xPct - dragRef.current.start.xPct
+            const dy = yPct - dragRef.current.start.yPct
+            const circles = aCircles().map(c => c.id===circId ? ({ ...c, c: { xPct: clamp(base.xPct + dx), yPct: clamp(base.yPct + dy) } }) : c)
+            onAnnotationsChange?.({ ...(annotations||{}), circles })
+          } else {
+            const circles = aCircles().map(c => c.id===circId ? ({ ...c, c: { xPct: clamp(xPct), yPct: clamp(yPct) } }) : c)
+            onAnnotationsChange?.({ ...(annotations||{}), circles })
+          }
+        } else if (handle === 'r'){
+          // radius based on distance from center
+          const cItem = aCircles().find(c => c.id===circId)
+          if (cItem) {
+            const dxr = xPct - cItem.c.xPct
+            const dyr = yPct - cItem.c.yPct
+            const rPct = Math.sqrt(dxr*dxr + dyr*dyr)
+            const circles = aCircles().map(c => c.id===circId ? ({ ...c, rPct }) : c)
+            onAnnotationsChange?.({ ...(annotations||{}), circles })
+          }
+        }
+      } else if (String(id).startsWith('arrow:')){
+        const arrowId = dragRef.current.arrowId
+        const handle = dragRef.current.handle // 'a' | 'b' | 'ctrl' | 'move'
+        let arrows
+        if (handle==='move'){
+          const { start, orig } = dragRef.current
+          const dx = xPct - start.xPct
+          const dy = yPct - start.yPct
+          arrows = aArrows().map(ar => ar.id===arrowId ? ({
+            ...ar,
+            a: { xPct: clamp(orig.a.xPct + dx), yPct: clamp(orig.a.yPct + dy) },
+            b: { xPct: clamp(orig.b.xPct + dx), yPct: clamp(orig.b.yPct + dy) },
+            ctrl: { xPct: clamp(orig.ctrl.xPct + dx), yPct: clamp(orig.ctrl.yPct + dy) },
+          }) : ar)
+        } else {
+          arrows = aArrows().map(ar => ar.id===arrowId ? ({ ...ar, [handle]: { xPct: clamp(xPct), yPct: clamp(yPct) } }) : ar)
+        }
+        onAnnotationsChange?.({ ...(annotations||{}), arrows })
+      } else if (String(id).startsWith('angle:')){
+        const angleId = dragRef.current.angleId
+        const handle = dragRef.current.handle // 'a' | 'b' | 'c' | 'move'
+        let angles
+        if (handle==='move'){
+          const { start, orig } = dragRef.current
+          const dx = xPct - start.xPct
+          const dy = yPct - start.yPct
+          angles = aAngles().map(ag => ag.id===angleId ? ({
+            ...ag,
+            a: { xPct: clamp(orig.a.xPct + dx), yPct: clamp(orig.a.yPct + dy) },
+            b: { xPct: clamp(orig.b.xPct + dx), yPct: clamp(orig.b.yPct + dy) },
+            c: { xPct: clamp(orig.c.xPct + dx), yPct: clamp(orig.c.yPct + dy) },
+          }) : ag)
+        } else {
+          angles = aAngles().map(ag => ag.id===angleId ? ({ ...ag, [handle]: { xPct: clamp(xPct), yPct: clamp(yPct) } }) : ag)
+        }
+        onAnnotationsChange?.({ ...(annotations||{}), angles })
+      } else if (String(id).startsWith('note:')){
+        const noteId = dragRef.current.noteId
+        const notes = aNotes().map(n => n.id===noteId ? ({ ...n, p: { xPct: clamp(xPct), yPct: clamp(yPct) } }) : n)
+        onAnnotationsChange?.({ ...(annotations||{}), notes })
+      } else {
+        const p = (points||[]).find(pt => pt.id === id)
+        if (p) onUpdatePoint?.({ ...p, xPct, yPct })
       }
     }
     function onUp(){ dragRef.current = { id: null } }
@@ -337,7 +370,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   return (
     <div className="w-full mx-auto">
       {/* Aspect-ratio container (3/4) using padding-top so it reserves space even before image loads */}
-      <div ref={containerRef} onClick={handleClick} onDoubleClick={handleClick} className={`relative w-full bg-white/[0.02] border border-white/10 rounded-md overflow-hidden ${toolMode==='dim' ? 'cursor-crosshair' : (addMode ? 'cursor-crosshair' : 'cursor-default')}`} style={{ maxHeight: '70vh' }}>
+      <div ref={containerRef} onClick={handleClick} onDoubleClick={handleClick} className={`relative w-full bg-white/[0.02] border border-white/10 rounded-md overflow-hidden ${toolMode==='dim' ? 'cursor-crosshair' : (addMode ? 'cursor-crosshair' : 'cursor-default')}`} style={{ maxHeight: '70vh', touchAction: 'none' }}>
         <div style={{ paddingTop: `${aspectPercent}%` }} />
         {/* Background garment image */}
         <img src={src} alt="Measurement guide" className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none" style={{ display: loaded && !error ? 'block' : 'none' }} />
@@ -352,49 +385,49 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
 
         {/* Built-in fixed labels (conditionally shown) */}
         {shouldShow('neck') && (
-          <div className="absolute" style={pos('neck')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'neck') : null}>
+          <div className="absolute z-40" style={pos('neck')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'neck') }}>
             <LabeledBox label="Neck" drag={moveFixed}>
               <Input value={v('neck')} onChange={set('neck')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('shoulders') && (
-          <div className="absolute" style={pos('shoulders')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'shoulders') : null}>
+          <div className="absolute z-40" style={pos('shoulders')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'shoulders') }}>
             <LabeledBox label="Shoulders" drag={moveFixed}>
               <Input value={v('shoulders')} onChange={set('shoulders')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('chest') && (
-          <div className="absolute" style={pos('chest')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'chest') : null}>
+          <div className="absolute z-40" style={pos('chest')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'chest') }}>
             <LabeledBox label="Chest (Ch)" drag={moveFixed}>
               <Input value={v('chest')} onChange={set('chest')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('waist') && (
-          <div className="absolute" style={pos('waist')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'waist') : null}>
+          <div className="absolute z-40" style={pos('waist')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'waist') }}>
             <LabeledBox label="Waist (W)" drag={moveFixed}>
               <Input value={v('waist')} onChange={set('waist')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('sleeve_length') && (
-          <div className="absolute" style={pos('sleeve_length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'sleeve_length') : null}>
+          <div className="absolute z-40" style={pos('sleeve_length')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'sleeve_length') }}>
             <LabeledBox label="Sleeve" drag={moveFixed}>
               <Input value={v('sleeve_length')} onChange={set('sleeve_length')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('hips') && (
-          <div className="absolute" style={pos('hips')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'hips') : null}>
+          <div className="absolute z-40" style={pos('hips')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'hips') }}>
             <LabeledBox label="Hips" drag={moveFixed}>
               <Input value={v('hips')} onChange={set('hips')} />
             </LabeledBox>
           </div>
         )}
         {shouldShow('length') && (
-          <div className="absolute" style={pos('length')} onPointerDown={(e)=> moveFixed ? beginDragFixed(e,'length') : null}>
+          <div className="absolute z-40" style={pos('length')} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e,'length') }}>
             <LabeledBox label="Length" drag={moveFixed}>
               <Input value={v('length')} onChange={set('length')} />
             </LabeledBox>
@@ -403,7 +436,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
 
         {/* Extra diagram-specific fixed labels */}
         {(extraFixed||[]).map((ef) => (
-          <div key={ef.key} className="absolute" style={posExtra(ef.key, ef.default)} onPointerDown={(e)=> moveFixed ? beginDragFixed(e, ef.key) : null}>
+          <div key={ef.key} className="absolute z-40" style={posExtra(ef.key, ef.default)} onPointerDown={(e)=> { if (moveFixed && !isControl(e.target)) beginDragFixed(e, ef.key) }}>
             <LabeledBox label={ef.label || ef.key} drag={moveFixed}>
               <Input value={v(ef.key)} onChange={(k=> (e)=> onChange?.(k, e.target.value))(ef.key)} />
             </LabeledBox>
@@ -450,10 +483,10 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
             const r = (c.rPct/100) * (box.w||1)
             return (
               <g key={c.id}>
-                <circle cx={cx} cy={cy} r={Math.max(6, r)} fill="none" stroke="#fcd34d" strokeWidth="2" strokeDasharray="4 3" className="cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedCircleId(c.id) }} onDoubleClick={(e)=>{ e.stopPropagation(); const circles = aCircles().filter(x => x.id!==c.id); onAnnotationsChange?.({ ...(annotations||{}), circles }); setSelectedCircleId(null) }} />
+                <circle cx={cx} cy={cy} r={Math.max(6, r)} fill="none" stroke="#fcd34d" strokeWidth="2" strokeDasharray="4 3" className="cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedCircleId(prev => prev===c.id ? null : c.id) }} onDoubleClick={(e)=>{ e.stopPropagation(); const circles = aCircles().filter(x => x.id!==c.id); onAnnotationsChange?.({ ...(annotations||{}), circles }); setSelectedCircleId(null) }} />
                 {c.note && (
                   <>
-                    <rect x={cx + r + 6} y={cy - 9} width="60" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
+                    <rect x={cx + r + 6} y={cy - 9} width="60" height="18" rx="3" fill="rgba(15,23,42,1.0)" stroke="rgba(255,255,255,0.6)" />
                     <text x={cx + r + 36} y={cy+4} textAnchor="middle" fontSize="10" fill="#fff">{c.note}</text>
                   </>
                 )}
@@ -530,11 +563,107 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
 
         {/* Custom points */}
         {layers.points && (points||[]).map((p) => (
-          <div key={p.id} className="absolute" style={at(p.xPct, p.yPct)} onClick={(e)=> e.stopPropagation()} onPointerDown={(e)=> isControl(e.target) ? null : beginDrag(e, p)}>
+          <div key={p.id} className="absolute z-40" style={at(p.xPct, p.yPct)} onClick={(e)=> e.stopPropagation()} onPointerDown={(e)=> isControl(e.target) ? null : beginDrag(e, p)}>
             <LabeledBox label={p.label} drag={true}>
               <Input value={p.value || ''} onChange={(e)=> onUpdatePoint?.({ ...p, value: e.target.value })} />
             </LabeledBox>
           </div>
+        ))}
+
+        {/* Notes as DOM pills for better usability */}
+        {layers.notes && aNotes().map((n) => (
+          <div key={`${n.id}-pill`} className="absolute z-30" data-control="true" style={at(n.p.xPct, n.p.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedNoteId(n.id); dragRef.current = { id: `note:${n.id}`, noteId: n.id } }} onClick={(e)=>{ e.stopPropagation(); }}>
+            <div className="max-w-[140px] px-2 py-0.5 rounded-full bg-slate-900/90 border border-white/30 text-white text-[10px] whitespace-nowrap overflow-hidden text-ellipsis">
+              {n.text || 'Note'}
+            </div>
+          </div>
+        ))}
+
+        {/* Mini control squares for quick selection of each annotation */}
+        {layers.dims && aDims().map((d) => {
+          const xPct = (d.a.xPct + d.b.xPct) / 2
+          const yPct = (d.a.yPct + d.b.yPct) / 2
+          return (
+            <button key={`${d.id}-ctrl`} type="button" data-control="true" className="absolute z-40" style={at(xPct, yPct)}
+              onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation();
+                const rect = containerRef.current.getBoundingClientRect();
+                const xp = ((e.clientX - rect.left - box.left) / (box.w||1)) * 100
+                const yp = ((e.clientY - rect.top - box.top) / (box.h||1)) * 100
+                dragRef.current = { id: `dim:${d.id}`, dimId: d.id, handle: 'move', start: { xPct: xp, yPct: yp }, orig: { a: { ...d.a }, b: { ...d.b } } }
+              }}
+              onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedDimId(prev => prev===d.id ? null : d.id) }}>
+              <ControlSquare />
+            </button>
+          )
+        })}
+        {layers.circles && aCircles().map((c) => {
+          const r = c.rPct || 0
+          const dx = r * 0.866 // cos 30°
+          const dy = r * 0.5   // sin 30°
+          return (
+          <button key={`${c.id}-ctrl`} type="button" data-control="true" className="absolute z-40" style={at(c.c.xPct + dx + 0.8, c.c.yPct - dy)}
+            onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation();
+              const rect = containerRef.current.getBoundingClientRect();
+              const xp = ((e.clientX - rect.left - box.left) / (box.w||1)) * 100
+              const yp = ((e.clientY - rect.top - box.top) / (box.h||1)) * 100
+              dragRef.current = { id: `circle:${c.id}`, circId: c.id, handle: 'move', start: { xPct: xp, yPct: yp }, origC: { ...c.c } }
+            }}
+            onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedCircleId(prev => prev===c.id ? null : c.id) }}>
+            <ControlSquare />
+          </button>
+        )})}
+        {layers.arrows && aArrows().map((ar) => {
+          const mx = (ar.a.xPct + ar.b.xPct)/2
+          const my = (ar.a.yPct + ar.b.yPct)/2
+          const vx = (ar.b.xPct - ar.a.xPct)
+          const vy = (ar.b.yPct - ar.a.yPct)
+          const len = Math.sqrt(vx*vx + vy*vy) || 1
+          const tx = vx/len
+          const ty = vy/len
+          const nx = -vy/len
+          const ny = vx/len
+          const off = 2.2 // stronger normal offset to avoid overlapping handles
+          const tOff = 0.6 // tiny along-line offset for extra separation
+          const baseX = (ar.curved ? ar.ctrl.xPct : mx)
+          const baseY = (ar.curved ? ar.ctrl.yPct : my)
+          const xPct = baseX + nx*off + tx*tOff
+          const yPct = baseY + ny*off + ty*tOff
+          return (
+            <button key={`${ar.id}-ctrl`} type="button" data-control="true" className="absolute z-40" style={at(xPct, yPct)}
+              onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation();
+                const rect = containerRef.current.getBoundingClientRect();
+                const xp = ((e.clientX - rect.left - box.left) / (box.w||1)) * 100
+                const yp = ((e.clientY - rect.top - box.top) / (box.h||1)) * 100
+                dragRef.current = { id: `arrow:${ar.id}`, arrowId: ar.id, handle: 'move', start: { xPct: xp, yPct: yp }, orig: { a: { ...ar.a }, b: { ...ar.b }, ctrl: { ...ar.ctrl } } }
+              }}
+              onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedArrowId(prev => prev===ar.id ? null : ar.id) }}>
+              <ControlSquare />
+            </button>
+          )
+        })}
+        {layers.angles && aAngles().map((ag) => (
+          <button key={`${ag.id}-ctrl`} type="button" data-control="true" className="absolute z-40" style={at(ag.b.xPct + 0.3, ag.b.yPct)}
+            onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation();
+              const rect = containerRef.current.getBoundingClientRect();
+              const xp = ((e.clientX - rect.left - box.left) / (box.w||1)) * 100
+              const yp = ((e.clientY - rect.top - box.top) / (box.h||1)) * 100
+              dragRef.current = { id: `angle:${ag.id}`, angleId: ag.id, handle: 'move', start: { xPct: xp, yPct: yp }, orig: { a: { ...ag.a }, b: { ...ag.b }, c: { ...ag.c } } }
+            }}
+            onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedAngleId(prev => prev===ag.id ? null : ag.id) }}>
+            <ControlSquare />
+          </button>
+        ))}
+        {layers.notes && aNotes().map((n) => (
+          <button key={`${n.id}-ctrl`} type="button" data-control="true" className="absolute z-40" style={at(n.p.xPct + 0.3, n.p.yPct)}
+            onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation();
+              const rect = containerRef.current.getBoundingClientRect();
+              const xp = ((e.clientX - rect.left - box.left) / (box.w||1)) * 100
+              const yp = ((e.clientY - rect.top - box.top) / (box.h||1)) * 100
+              dragRef.current = { id: `note:${n.id}`, noteId: n.id }
+            }}
+            onClick={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedNoteId(prev => prev===n.id ? null : n.id) }}>
+            <ControlSquare />
+          </button>
         ))}
 
         {/* Drag handles for dimension endpoints (pointer-events enabled) */}
@@ -625,16 +754,12 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
                     <button onClick={()=> { setToolMode('dim'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Dimension</button>
                     <button onClick={()=> { setToolMode('circle'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Circle</button>
                     <button onClick={()=> { setToolMode('arrow'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Arrow</button>
-                    <button onClick={()=> { setToolMode('angle'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Angle</button>
-                    <button onClick={()=> { setToolMode('note'); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/15 text-white/85">Note</button>
                   </div>
                   {(toolMode==='dim' || toolMode==='circle' || toolMode==='arrow' || toolMode==='angle' || toolMode==='note') && (
                     <div className="text-[10px] text-sky-200 bg-sky-500/10 border border-sky-400/30 rounded px-2 py-1 mt-1">
-                      {toolMode==='dim' && 'Click start then end'}
+                      {toolMode==='dim' && 'Click to place'}
                       {toolMode==='circle' && 'Click center then radius'}
                       {toolMode==='arrow' && 'Click to place'}
-                      {toolMode==='angle' && 'Click to place'}
-                      {toolMode==='note' && 'Click to place'}
                     </div>
                   )}
                   <div className="text-[10px] text-white/60 px-1 mt-1">Scale</div>
@@ -648,20 +773,18 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
             <div className="relative">
               <button type="button" onClick={()=> { setShowLayers(o=>!o); setShowTools(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/20 text-white/80">Layers ▾</button>
               {showLayers && (
-                <div className="absolute right-0 mt-1 w-60 rounded border border-white/20 bg-slate-900/95 p-2 shadow-xl space-y-2">
+                <div className="absolute right-0 mt-1 w-56 rounded border border-white/20 bg-slate-900/95 p-2 shadow-xl space-y-2">
                   <div className="grid grid-cols-3 gap-1">
                     <button onClick={()=> setLayers(s=> ({...s, labels: !s.labels}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.labels? 'bg-white/20':'bg-white/10'} text-white/80`}>Labels</button>
                     <button onClick={()=> setLayers(s=> ({...s, points: !s.points}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.points? 'bg-white/20':'bg-white/10'} text-white/80`}>Points</button>
                     <button onClick={()=> setLayers(s=> ({...s, dims: !s.dims}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.dims? 'bg-white/20':'bg-white/10'} text-white/80`}>Dims</button>
                     <button onClick={()=> setLayers(s=> ({...s, circles: !s.circles}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.circles? 'bg-white/20':'bg-white/10'} text-white/80`}>Circles</button>
                     <button onClick={()=> setLayers(s=> ({...s, arrows: !s.arrows}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.arrows? 'bg-white/20':'bg-white/10'} text-white/80`}>Arrows</button>
-                    <button onClick={()=> setLayers(s=> ({...s, angles: !s.angles}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.angles? 'bg-white/20':'bg-white/10'} text-white/80`}>Angles</button>
-                    <button onClick={()=> setLayers(s=> ({...s, notes: !s.notes}))} className={`text-[10px] px-1.5 py-0.5 rounded ${layers.notes? 'bg-white/20':'bg-white/10'} text-white/80`}>Notes</button>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={()=> { setLayers({ labels: true, points: false, dims: true, circles: true, arrows: true, angles: true, notes: true }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Show All</button>
+                    <button onClick={()=> { setLayers({ labels: true, points: false, dims: true, circles: true, arrows: true, angles: false, notes: false }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Show All</button>
                     <button onClick={()=> { setLayers({ labels: true, points: false, dims: false, circles: false, arrows: false, angles: false, notes: false }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Labels Only</button>
-                    <button onClick={()=> { setLayers({ labels: false, points: false, dims: true, circles: true, arrows: true, angles: true, notes: true }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Measures Only</button>
+                    <button onClick={()=> { setLayers({ labels: false, points: false, dims: true, circles: true, arrows: true, angles: false, notes: false }); setShowLayers(false) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">Measures Only</button>
                   </div>
                 </div>
               )}
@@ -680,7 +803,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           const cx = box.left + (ax+bx)/2
           const cy = box.top + (ay+by)/2 - 24
           return (
-            <div className="absolute flex items-center gap-1" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
+            <div className="absolute z-50 flex items-center gap-1 bg-slate-900/95 border border-white/20 rounded px-1.5 py-1 shadow-xl" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
               <button onClick={()=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, style: { ...(x.style||{}), dashed: !x.style?.dashed } }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Dash</button>
               <button onClick={()=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, style: { ...(x.style||{}), arrowheads: !x.style?.arrowheads } }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Arrows</button>
               <input maxLength={4} placeholder="#" value={d.text ?? ''} onChange={(e)=>{ const dims = aDims().map(x => x.id===d.id ? ({ ...x, text: e.target.value }) : x); onAnnotationsChange?.({ ...(annotations||{}), dims }) }} className="w-12 text-center bg-white/10 border border-white/20 rounded px-1 py-0.5 text-[10px] text-white" title="Manual label (max 4)" />
@@ -703,7 +826,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           const cx = box.left + (ax+bx)/2
           const cy = box.top + (ay+by)/2 - 24
           return (
-            <div className="absolute flex items-center gap-1" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
+            <div className="absolute z-50 flex items-center gap-1 bg-slate-900/85 border border-white/15 rounded px-1.5 py-1 shadow-xl" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)' }}>
               <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, style: { ...(x.style||{}), dashed: !x.style?.dashed } }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Dash</button>
               <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, style: { ...(x.style||{}), arrowhead: !x.style?.arrowhead } }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Head</button>
               <button onClick={()=>{ const arrows = aArrows().map(x => x.id===ar.id ? ({ ...x, curved: !x.curved }) : x); onAnnotationsChange?.({ ...(annotations||{}), arrows }) }} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/85">Curved</button>
@@ -722,7 +845,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           const bx = box.left + (ag.b.xPct/100) * (box.w||1)
           const by = box.top + (ag.b.yPct/100) * (box.h||1) - 24
           return (
-            <div className="absolute flex items-center gap-1" style={{ left: bx, top: by, transform: 'translate(-50%, -50%)' }}>
+            <div className="absolute z-50 flex items-center gap-1 bg-slate-900/85 border border-white/15 rounded px-1.5 py-1 shadow-xl" style={{ left: bx, top: by, transform: 'translate(-50%, -50%)' }}>
               {/* Trash icon */}
               <button onClick={()=>{ const angles = aAngles().filter(x => x.id!==ag.id); onAnnotationsChange?.({ ...(annotations||{}), angles }); setSelectedAngleId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
               <button onClick={()=> setSelectedAngleId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
@@ -737,7 +860,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           const px = box.left + (n.p.xPct/100) * (box.w||1)
           const py = box.top + (n.p.yPct/100) * (box.h||1) - 24
           return (
-            <div className="absolute flex items-center gap-1" style={{ left: px, top: py, transform: 'translate(-50%, -50%)' }}>
+            <div className="absolute z-50 flex items-center gap-1 bg-slate-900/85 border border-white/15 rounded px-1.5 py-1 shadow-xl" style={{ left: px, top: py, transform: 'translate(-50%, -50%)' }}>
               <input maxLength={10} value={n.text || ''} onChange={(e)=>{ const val = e.target.value.slice(0,10); const words = val.split(/\s+/).slice(0,3).join(' '); const notes = aNotes().map(x => x.id===n.id ? ({ ...x, text: words }) : x); onAnnotationsChange?.({ ...(annotations||{}), notes }) }} className="w-28 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white" placeholder="note" />
               {/* Trash icon */}
               <button onClick={()=>{ const notes = aNotes().filter(x => x.id!==n.id); onAnnotationsChange?.({ ...(annotations||{}), notes }); setSelectedNoteId(null) }} className="text-[10px] px-1 py-0.5 rounded bg-red-500/25 border border-red-400/40 text-red-100" title="Delete">🗑</button>
@@ -751,24 +874,28 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           const c = aCircles().find(x => x.id===selectedCircleId)
           if (!c) return null
           const cxPx = box.left + (c.c.xPct/100) * (box.w||1)
-          const cyPx = box.top + (c.c.yPct/100) * (box.h||1) - 24
+          const cyPx = box.top + (c.c.yPct/100) * (box.h||1) - 26
           return (
-            <div className="absolute flex items-center gap-1" style={{ left: cxPx, top: cyPx, transform: 'translate(-50%, -50%)' }}>
+            <div className="absolute z-50 flex items-center gap-1 bg-slate-900 border border-white/20 rounded px-1.5 py-1 shadow-xl" data-control="true" style={{ left: cxPx, top: cyPx, transform: 'translate(-50%, -50%)' }}>
               <input
+                type="text"
                 maxLength={24}
                 placeholder="note"
                 value={c.note ?? ''}
-                onChange={(e)=>{
-                  const circles = aCircles().map(x => x.id===c.id ? ({ ...x, note: e.target.value }) : x)
-                  onAnnotationsChange?.({ ...(annotations||{}), circles })
-                }}
-                className="w-28 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white"
+                onChange={(e)=>{ const circles = aCircles().map(x => x.id===c.id ? ({ ...x, note: e.target.value }) : x); onAnnotationsChange?.({ ...(annotations||{}), circles }) }}
+                className="w-20 bg-white/10 border border-white/20 rounded px-2 py-0.5 text-[10px] text-white"
               />
+              <input type="range" min="2" max="40" step="1" value={Math.max(2, Math.round(c.rPct||10))}
+                onChange={(e)=>{ const v = Number(e.target.value); const circles = aCircles().map(x => x.id===c.id ? ({ ...x, rPct: v }) : x); onAnnotationsChange?.({ ...(annotations||{}), circles }) }}
+                onInput={(e)=>{ const v = Number(e.currentTarget.value); const circles = aCircles().map(x => x.id===c.id ? ({ ...x, rPct: v }) : x); onAnnotationsChange?.({ ...(annotations||{}), circles }) }}
+                className="w-24 accent-sky-400" />
+              <button onClick={()=>{ const circles = aCircles().map(x => x.id===c.id ? ({ ...x, rPct: Math.max(2, (x.rPct||10) - 2) }) : x); onAnnotationsChange?.({ ...(annotations||{}), circles }) }} className="text-[10px] px-1 py-0.5 rounded bg-white/10 border border-white/20 text-white/85" title="Smaller">–</button>
+              <button onClick={()=>{ const circles = aCircles().map(x => x.id===c.id ? ({ ...x, rPct: (x.rPct||10) + 2 }) : x); onAnnotationsChange?.({ ...(annotations||{}), circles }) }} className="text-[10px] px-1 py-0.5 rounded bg-white/10 border border-white/20 text-white/85" title="Bigger">+</button>
               <button onClick={()=>{
                 const circles = aCircles().filter(x => x.id!==c.id)
                 onAnnotationsChange?.({ ...(annotations||{}), circles })
                 setSelectedCircleId(null)
-              }} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 border border-red-400/40 text-red-100">Delete</button>
+              }} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/30 border border-red-400/50 text-red-100">Delete</button>
               <button onClick={()=> setSelectedCircleId(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/70">Close</button>
             </div>
           )
@@ -805,6 +932,12 @@ function Input(props){
 function Handle(){
   return (
     <div className="w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-300 border border-sky-500 shadow" />
+  )
+}
+
+function ControlSquare(){
+  return (
+    <div className="w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 bg-sky-300 border border-sky-600 rounded-sm shadow ring-1 ring-white/30" />
   )
 }
 

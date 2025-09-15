@@ -5,6 +5,7 @@ import NewCustomerForm from "../forms/NewCustomerForm.jsx"
 import MeasurementOverlay from "../components/customers/MeasurementOverlay.jsx"
 import ThobeWizard from "../components/measurements/ThobeWizard.jsx"
 import SirwalFalinaWizard from "../components/measurements/SirwalFalinaWizard.jsx"
+import { saveMeasurementsForCustomer, loadMeasurementsForCustomer, copyLatestToOrder } from "../lib/measurementsStorage.js"
 
 export default function Orders() {
   const canView = useCan('orders','view')
@@ -61,6 +62,19 @@ export default function Orders() {
         setSirwalM(sf)
         setMeasureValues(measureType === 'thobe' ? th : sf)
       }
+      // Try loading persisted JSON from Storage for quick restore
+      try {
+        const cust = customers.find(c => c.id === form.customer_id)
+        if (cust) {
+          const bizMeta = { businessName: null, businessId: ids.business_id }
+          const metaCust = { name: cust.name, phone: cust.phone, id: cust.id }
+          const loaded = await loadMeasurementsForCustomer(bizMeta, metaCust, measureType)
+          if (loaded && !cancelled) {
+            if (measureType === 'thobe') { setThobeM(loaded); setMeasureValues(loaded) }
+            else { setSirwalM(loaded); setMeasureValues(loaded) }
+          }
+        }
+      } catch {}
     })()
     return () => { cancelled = true }
   }, [measureOpen, form.customer_id, measureType])
@@ -223,8 +237,22 @@ export default function Orders() {
         notes: form.notes || null,
         status: 'new',
       }
-      const { error } = await supabase.from('orders').insert(payload)
+      const { data: inserted, error } = await supabase
+        .from('orders')
+        .insert(payload)
+        .select('id')
+        .single()
       if (error) throw error
+      const newOrderId = inserted?.id
+      // Also store a copy of current measurements under an order-specific key for future invoices
+      try {
+        const cust = useNewCustomer ? { name: newCustomer.name, phone: newCustomer.phone, id: customerId } : customers.find(c => c.id === customerId)
+        if (cust && newOrderId) {
+          const bizMeta = { businessName: null, businessId: ids.business_id }
+          if (Object.keys(thobeM||{}).length) await copyLatestToOrder(bizMeta, { name: cust.name, phone: cust.phone, id: cust.id }, 'thobe', newOrderId)
+          if (Object.keys(sirwalM||{}).length) await copyLatestToOrder(bizMeta, { name: cust.name, phone: cust.phone, id: cust.id }, 'sirwal_falina', newOrderId)
+        }
+      } catch {}
       setOpen(false)
       await loadOrders()
     } catch (e) {
@@ -280,7 +308,7 @@ export default function Orders() {
       </div>
 
       {open && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto" onClick={()=> setOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
           <div className="w-full max-w-2xl mx-auto my-8 rounded-2xl border border-white/10 bg-slate-900 p-4 shadow-xl" onClick={(e)=> e.stopPropagation()}>
             <div className="flex items-center justify-between sticky top-0 bg-slate-900/95 backdrop-blur px-0 pb-3">
               <div className="text-white/90 font-medium">New Order</div>
@@ -403,7 +431,7 @@ export default function Orders() {
             )}
 
             {measureOpen && (
-              <div className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm" onClick={(e)=> { e.stopPropagation(); setMeasureOpen(false) }}>
+              <div className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
                 <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-5xl h-[86vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl p-4 overflow-hidden" onClick={(e)=> e.stopPropagation()}>
                   {measureType === 'thobe' ? (
                     <ThobeWizard
@@ -420,6 +448,11 @@ export default function Orders() {
                         setThobeM(measurements)
                         setMeasureValues(measurements)
                         setMeasureOpen(false)
+                        // Persist JSON snapshot to Storage bucket
+                        try {
+                          const cust = customers.find(c => c.id === form.customer_id)
+                          if (cust) await saveMeasurementsForCustomer({ businessName: null, businessId: ids.business_id }, { name: cust.name, phone: cust.phone, id: cust.id }, 'thobe', measurements)
+                        } catch {}
                         // Persist combined to customer if selected
                         if (form.customer_id) {
                           const combined = {
@@ -441,6 +474,11 @@ export default function Orders() {
                         setSirwalM(measurements)
                         setMeasureValues(measurements)
                         setMeasureOpen(false)
+                        // Persist JSON snapshot to Storage bucket
+                        try {
+                          const cust = customers.find(c => c.id === form.customer_id)
+                          if (cust) await saveMeasurementsForCustomer({ businessName: null, businessId: ids.business_id }, { name: cust.name, phone: cust.phone, id: cust.id }, 'sirwal_falina', measurements)
+                        } catch {}
                         if (form.customer_id) {
                           const combined = {
                             ...(Object.keys(thobeM||{}).length ? { thobe: thobeM } : {}),

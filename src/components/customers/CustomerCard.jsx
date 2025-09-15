@@ -222,6 +222,29 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
     </div>
   )
 
+  // Helpers to view/edit nested thobe structure (fallback to flat legacy)
+  const thobeView = useMemo(() => (measurements?.thobe ? measurements.thobe : measurements || {}), [measurements])
+  function saveThobePatch(patch){
+    const next = measurements?.thobe || measurements?.sirwal_falina
+      ? { ...measurements, thobe: { ...(measurements.thobe||{}), ...patch } }
+      : { ...measurements, ...patch }
+    queueSaveMeasurements(next)
+  }
+  function saveThobePoints(updater){
+    const cur = thobeView.points || {}
+    const main = Array.isArray(cur.main) ? cur.main : []
+    const nextMain = updater(main)
+    saveThobePatch({ points: { ...cur, main: nextMain } })
+  }
+  function saveThobeFixed(update){
+    const cur = thobeView.fixedPositions || {}
+    const main = cur.main || {}
+    saveThobePatch({ fixedPositions: { ...cur, main: { ...main, ...update } } })
+  }
+  function saveThobeAnnotations(next){
+    saveThobePatch({ annotations: next })
+  }
+
   const tabs = [
     {
       label: "Measurements",
@@ -234,10 +257,18 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
           </div>
           <div className="rounded-lg border border-white/10 bg-white/[0.02] surface-pattern p-2">
             <MeasurementOverlay
-              values={measurements}
-              onChange={(key, value)=> queueSaveMeasurements({ ...measurements, [key]: value })}
+              values={thobeView}
+              onChange={(key, value)=> saveThobePatch({ [key]: value })}
               fallbackUrls={["/measurements/garment-fallback.png"]}
               aspectPercent={130}
+              points={thobeView.points?.main || []}
+              onAddPoint={(p)=> saveThobePoints(arr => [...arr, p])}
+              onUpdatePoint={(p)=> saveThobePoints(arr => arr.map(x => x.id===p.id ? p : x))}
+              onRemovePoint={(p)=> saveThobePoints(arr => arr.filter(x => x.id!==p.id))}
+              fixedPositions={thobeView.fixedPositions?.main || {}}
+              onFixedUpdate={(key, pos)=> saveThobeFixed({ [key]: pos })}
+              annotations={thobeView.annotations || {}}
+              onAnnotationsChange={saveThobeAnnotations}
             />
           </div>
         </div>
@@ -408,7 +439,7 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
 
       {/* Modal with details */}
       {modalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm" onClick={() => setModalOpen(false)}>
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-7xl h-[90vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl overflow-hidden" onClick={(e)=> e.stopPropagation()}>
             <button aria-label="Close" onClick={() => setModalOpen(false)} className="absolute top-3 right-3 h-9 w-9 rounded-full bg-white/10 border border-white/20 text-white/80 hover:bg-white/15">✕</button>
             <div className="flex items-center justify-between p-5 border-b border-white/10 sticky top-0 bg-slate-950/95 z-10">

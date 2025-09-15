@@ -196,3 +196,20 @@
   70%  { opacity: .6; }
   to   { transform: translateX(120%); opacity: 0.0; }
 }
+
+/* Force readable dropdown options on dark theme */
+.select-light option,
+.select-light optgroup {
+  color: #111 !important;
+  background: #fff !important;
+}
+/* Hint UA to render the popup in light mode (helps Windows/Chrome) */
+select.select-light,
+select.select-light:focus {
+  color-scheme: light;
+}
+/* Ensure the highlighted option remains visible */
+.select-light option:checked {
+  color: #fff !important;
+  background: #2563eb !important; /* blue highlight */
+}
