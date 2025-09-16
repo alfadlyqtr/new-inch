@@ -7,7 +7,7 @@ export default function Inventory() {
   const canCreate = useCan('inventory','create')
   if (!canView) return <Forbidden module="inventory" />
 
-  const [ids, setIds] = useState({ business_id: null, user_id: null, user_row_id: null })
+  const [ids, setIds] = useState({ business_id: null, user_id: null })
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
   const [stock, setStock] = useState([]) // from view v_stock_on_hand
@@ -19,37 +19,16 @@ export default function Inventory() {
   const [addOpen, setAddOpen] = useState(false)
   const [recvOpen, setRecvOpen] = useState(false)
   const [seeding, setSeeding] = useState(false)
-  const [defaultCurrency, setDefaultCurrency] = useState('SAR')
-
-  // Helper: extract ISO code from Settings currency label (e.g., 'QAR (ر.ق) - Qatari Riyal' -> 'QAR')
-  const toIsoCode = (s) => {
-    const m = String(s || '').match(/^([A-Z]{3})\b/)
-    return m ? m[1] : (s || 'SAR')
-  }
 
   useEffect(() => {
     (async () => {
       const { data: sess } = await supabase.auth.getSession()
       const user = sess?.session?.user
       if (!user) return
-      const { data: ua } = await supabase.from('users_app').select('id,business_id').eq('auth_user_id', user.id).maybeSingle()
-      if (ua?.business_id) setIds({ business_id: ua.business_id, user_id: user.id, user_row_id: ua.id })
+      const { data: ua } = await supabase.from('users_app').select('business_id').eq('auth_user_id', user.id).maybeSingle()
+      if (ua?.business_id) setIds({ business_id: ua.business_id, user_id: user.id })
     })()
   }, [])
-
-  // Load default currency from Settings (user_settings.invoice_settings.currency)
-  useEffect(() => {
-    ;(async () => {
-      if (!ids.user_row_id) return
-      const { data } = await supabase
-        .from('user_settings')
-        .select('invoice_settings')
-        .eq('user_id', ids.user_row_id)
-        .maybeSingle()
-      const cur = data?.invoice_settings?.currency
-      if (cur) setDefaultCurrency(toIsoCode(cur))
-    })()
-  }, [ids.user_row_id])
 
   useEffect(() => {
     if (!ids.business_id) return
@@ -188,7 +167,7 @@ export default function Inventory() {
       </div>
 
       {addOpen && (
-        <AddItemDialog onClose={()=> setAddOpen(false)} onSaved={(newItem)=> setItems(arr => [newItem, ...arr])} businessId={ids.business_id} defaultCurrency={defaultCurrency} />
+        <AddItemDialog onClose={()=> setAddOpen(false)} onSaved={(newItem)=> setItems(arr => [newItem, ...arr])} businessId={ids.business_id} />
       )}
 
       {recvOpen && (
@@ -207,21 +186,20 @@ export default function Inventory() {
             setStock(st || [])
             setLastCost(lc || [])
           }}
-          defaultCurrency={defaultCurrency}
         />
       )}
     </div>
   )
 }
 
-function AddItemDialog({ onClose, onSaved, businessId, defaultCurrency }){
+function AddItemDialog({ onClose, onSaved, businessId }){
   const [sku, setSku] = useState("")
   const [name, setName] = useState("")
   const [category, setCategory] = useState("fabric")
   const [uom, setUom] = useState("m")
   const [attrs, setAttrs] = useState({ color: '', width_cm: '', gsm: '', composition: '' })
   const [price, setPrice] = useState("")
-  const [currency, setCurrency] = useState(defaultCurrency)
+  const [currency, setCurrency] = useState("SAR")
   const [saving, setSaving] = useState(false)
 
   async function save(){
@@ -319,7 +297,7 @@ function AddItemDialog({ onClose, onSaved, businessId, defaultCurrency }){
   )
 }
 
-function ReceiveStockDialog({ onClose, onSaved, businessId, items, locations, suppliers, defaultCurrency }){
+function ReceiveStockDialog({ onClose, onSaved, businessId, items, locations, suppliers }){
   const [itemId, setItemId] = useState(items[0]?.id || "")
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || "")
   const [locationId, setLocationId] = useState(locations[0]?.id || "")
@@ -327,7 +305,7 @@ function ReceiveStockDialog({ onClose, onSaved, businessId, items, locations, su
   const [qty, setQty] = useState("")
   const [uom, setUom] = useState("m")
   const [unitCost, setUnitCost] = useState("")
-  const [currency, setCurrency] = useState(defaultCurrency)
+  const [currency, setCurrency] = useState("SAR")
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
