@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient.js";
 import { useCan, PermissionGate } from "../lib/permissions.jsx";
 import InventoryItems from "../components/inventory/InventoryItems";
+import InventoryMaterials from "../components/inventory/InventoryMaterials";
 import InventorySuppliers from "../components/inventory/InventorySuppliers";
-import MaterialsPicker from "./MaterialsPicker.jsx";
 
 // Constants
 const TABS = {
@@ -322,7 +322,10 @@ export default function Inventory() {
         )}
         
         {tab === TABS.MATERIALS && (
-          <MaterialsPicker />
+          <InventoryMaterials 
+            materials={[]}
+            onMaterialClick={() => {}}
+          />
         )}
         
         {tab === TABS.SUPPLIERS && (

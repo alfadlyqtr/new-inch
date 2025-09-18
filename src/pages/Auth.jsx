@@ -16,23 +16,59 @@ export default function Auth() {
     e.preventDefault()
     setError("")
     setLoading(true)
+    
     try {
+      // Validate inputs
       if (step !== 2 || !roleChoice) {
-        setError("Please choose account type first")
-        setLoading(false)
-        return
+        throw new Error("Please choose account type first")
       }
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        setError(error.message)
-        return
+      
+      if (!email || !password) {
+        throw new Error("Please fill in all fields")
       }
-      if (data?.user) {
-        // No traffic cop: go where the user chose
-        navigate(roleChoice === 'bo' ? '/bo/dashboard' : '/staff/dashboard', { replace: true })
+      
+      // Sign in with email and password
+      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({ 
+        email: email.trim(),
+        password: password
+      })
+      
+      if (signInError) throw signInError
+      if (!authData?.user) throw new Error("Authentication failed. Please try again.")
+
+      try {
+        // Get user's role from the database
+        const { data: userData, error: userError } = await supabase
+          .from('users_app')
+          .select('is_business_owner')
+          .eq('auth_user_id', authData.user.id)
+          .single()
+
+        if (userError) throw userError
+        if (!userData) throw new Error("User account not found")
+
+        // Verify the selected role matches the user's actual role
+        const isBusinessOwner = userData.is_business_owner === true
+        const selectedBusinessOwner = roleChoice === 'bo'
+        
+        if (isBusinessOwner !== selectedBusinessOwner) {
+          const correctRole = isBusinessOwner ? 'Business Owner' : 'Staff'
+          throw new Error(`Please sign in as ${correctRole}.`)
+        }
+
+        // Redirect to the appropriate dashboard
+        navigate(isBusinessOwner ? '/bo/dashboard' : '/staff/dashboard', { 
+          replace: true 
+        })
+        
+      } catch (roleError) {
+        // Sign out if there was an error after successful auth
+        await supabase.auth.signOut()
+        throw roleError
       }
+      
     } catch (err) {
-      setError(typeof err?.message === 'string' ? err.message : "Unexpected error during sign-in")
+      setError(err.message || "An error occurred during sign in")
     } finally {
       setLoading(false)
     }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
 import MeasurementOverlay from "../customers/MeasurementOverlay.jsx"
+import { supabase } from "../../lib/supabaseClient.js"
 
 /**
  * ThobeWizard
@@ -99,12 +100,17 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
     return layoutDefaultSide
   }
 
-  // Options (checkboxes)
+  // Options (checkboxes and single-select season)
   const [options, setOptions] = useState(() => initial.options || {
     collar_design: [],
     cuff_type: [],
     front_patty_type: [],
     pocket_type: [],
+    // New extra options
+    button_style: [],
+    fabric_type: [],
+    stitching_style: [],
+    season: '', // 'Summer' | 'Winter' | 'All-season'
   })
 
   // Free-form notes for special instructions or multiple styles
@@ -112,6 +118,47 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
 
   // Diagram annotations (e.g., dimension lines)
   const [annotations, setAnnotations] = useState(() => initial.annotations || {})
+
+  // Inventory-backed options
+  const [businessId, setBusinessId] = useState(null)
+  const [buttonStyles, setButtonStyles] = useState([]) // from inventory_items where category='button'
+  const [fabricTypes, setFabricTypes] = useState([])   // from inventory_items where category='fabric'
+
+  // Load business id
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: sess } = await supabase.auth.getSession()
+        const user = sess?.session?.user
+        if (!user) return
+        const { data: ua } = await supabase
+          .from('users_app')
+          .select('business_id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle()
+        if (ua?.business_id) setBusinessId(ua.business_id)
+      } catch {}
+    })()
+  }, [])
+
+  // Load inventory-driven option values
+  useEffect(() => {
+    if (!businessId) return
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('inventory_items')
+          .select('id,name,category')
+          .eq('business_id', businessId)
+          .in('category', ['button','fabric'])
+        if (error) throw error
+        const btn = Array.from(new Set((data||[]).filter(x => x.category === 'button').map(x => x.name).filter(Boolean)))
+        const fab = Array.from(new Set((data||[]).filter(x => x.category === 'fabric').map(x => x.name).filter(Boolean)))
+        setButtonStyles(btn)
+        setFabricTypes(fab)
+      } catch {}
+    })()
+  }, [businessId])
 
   const MAIN_KEYS = ['neck','shoulders','chest','waist','sleeve_length','arm','length','chest_l']
   const COLLAR_KEYS = ['collar_width','collar_height','collar_curve','neck']
@@ -123,6 +170,7 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
     { key: 'collar',  title: 'Collar Diagram',  image: '/measurements/thobe/thobe coller.png', aspect: 120 },
     { key: 'side',    title: 'Side Diagram',    image: '/measurements/thobe/thobe side daigram.png', aspect: 135 },
     { key: 'options', title: 'Thobe Options' },
+    { key: 'more',    title: 'More Options' },
     { key: 'summary', title: 'Summary' },
   ]
 
@@ -190,6 +238,10 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
       if (set.has(key)) set.delete(key); else set.add(key)
       return { ...prev, [group]: Array.from(set) }
     })
+  }
+
+  function setSingleOption(group, value){
+    setOptions(prev => ({ ...prev, [group]: value }))
   }
 
   function finish(){
@@ -407,6 +459,58 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        {s.key === 'more' && (
+          <div className="space-y-6">
+            {buttonStyles.length > 0 && (
+              <div>
+                <div className="text-white/80 font-medium mb-2">Button Styles</div>
+                <div className="flex flex-wrap gap-2">
+                  {buttonStyles.map(key => {
+                    const checked = (options.button_style||[]).includes(key)
+                    return (
+                      <button key={key} type="button" onClick={()=> toggleOption('button_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-sky-500/15 border-sky-400/40 text-sky-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {fabricTypes.length > 0 && (
+              <div>
+                <div className="text-white/80 font-medium mb-2">Fabric Type</div>
+                <div className="flex flex-wrap gap-2">
+                  {fabricTypes.map(key => {
+                    const checked = (options.fabric_type||[]).includes(key)
+                    return (
+                      <button key={key} type="button" onClick={()=> toggleOption('fabric_type', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="text-white/80 font-medium mb-2">Stitching Style</div>
+              <div className="flex flex-wrap gap-2">
+                {['Single','Double','Top','Decorative'].map(key => {
+                  const checked = (options.stitching_style||[]).includes(key)
+                  return (
+                    <button key={key} type="button" onClick={()=> toggleOption('stitching_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-amber-500/15 border-amber-400/40 text-amber-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-white/80 font-medium mb-2">Season</div>
+              <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                {['Summer','Winter','All-season'].map(key => (
+                  <button key={key} type="button" onClick={()=> setSingleOption('season', key)} className={`px-3 py-1.5 text-sm ${options.season===key ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>{key}</button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {s.key === 'summary' && (
