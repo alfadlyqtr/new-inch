@@ -6,8 +6,10 @@ import MeasurementOverlay from "../components/customers/MeasurementOverlay.jsx"
 import ThobeWizard from "../components/measurements/ThobeWizard.jsx"
 import SirwalFalinaWizard from "../components/measurements/SirwalFalinaWizard.jsx"
 import { saveMeasurementsForCustomer, loadMeasurementsForCustomer, copyLatestToOrder } from "../lib/measurementsStorage.js"
+import { useTranslation } from 'react-i18next'
 
 export default function Orders() {
+  const { t } = useTranslation()
   const canView = useCan('orders','view')
   const canCreate = useCan('orders','create')
 
@@ -269,18 +271,18 @@ export default function Orders() {
       <div className="glass rounded-2xl border border-white/10 p-6">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-white/90">Orders</h1>
-            <p className="text-sm text-slate-400 mt-1">Track and manage orders.</p>
+            <h1 className="text-xl font-semibold text-white/90">{t('orders.title', { defaultValue: 'Orders' })}</h1>
+            <p className="text-sm text-slate-400 mt-1">{t('orders.subtitle', { defaultValue: 'Track and manage orders.' })}</p>
           </div>
           <div className="flex items-center gap-2">
             <input
-              placeholder="Search orders"
+              placeholder={t('orders.searchPlaceholder', { defaultValue: 'Search orders' })}
               value={search}
               onChange={(e)=> setSearch(e.target.value)}
               className="rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
             />
             <PermissionGate module="orders" action="create">
-              <button onClick={openCreate} className="px-3 py-2 rounded-md text-sm pill-active glow">New Order</button>
+              <button onClick={openCreate} className="px-3 py-2 rounded-md text-sm pill-active glow">{t('orders.actions.newOrder', { defaultValue: 'New Order' })}</button>
             </PermissionGate>
           </div>
         </div>
@@ -288,19 +290,19 @@ export default function Orders() {
 
       <div className="glass rounded-2xl border border-white/10 p-6">
         {loading ? (
-          <div className="text-slate-400">Loading orders…</div>
+          <div className="text-slate-400">{t('orders.loading', { defaultValue: 'Loading orders…' })}</div>
         ) : filteredOrders.length === 0 ? (
-          <div className="text-slate-400">No orders yet</div>
+          <div className="text-slate-400">{t('orders.empty', { defaultValue: 'No orders yet' })}</div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredOrders.map(o => (
               <div key={o.id} className="rounded-xl bg-white/5 border border-white/10 p-4 text-white/90 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-sm uppercase tracking-wide text-white/60">{o.items?.garment_category || '—'}</div>
-                  <div className="text-sm text-white/60">Qty: {o.items?.quantity ?? '—'}</div>
+                  <div className="text-sm text-white/60">{t('orders.qty', { defaultValue: 'Qty:' })} {o.items?.quantity ?? '—'}</div>
                 </div>
-                <div className="text-xs text-white/50">Due: {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</div>
-                <div className="text-sm line-clamp-2 text-white/80">{o.notes || 'No notes'}</div>
+                <div className="text-xs text-white/50">{t('orders.due', { defaultValue: 'Due:' })} {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</div>
+                <div className="text-sm line-clamp-2 text-white/80">{o.notes || t('orders.noNotes', { defaultValue: 'No notes' })}</div>
               </div>
             ))}
           </div>
@@ -311,21 +313,21 @@ export default function Orders() {
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
           <div className="w-full max-w-2xl mx-auto my-8 rounded-2xl border border-white/10 bg-slate-900 p-4 shadow-xl" onClick={(e)=> e.stopPropagation()}>
             <div className="flex items-center justify-between sticky top-0 bg-slate-900/95 backdrop-blur px-0 pb-3">
-              <div className="text-white/90 font-medium">New Order</div>
+              <div className="text-white/90 font-medium">{t('orders.modal.newOrderTitle', { defaultValue: 'New Order' })}</div>
               <button onClick={()=> setOpen(false)} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
             </div>
 
             <div className="mt-2 space-y-4">
               <div>
-                <label className="block text-sm text-white/70 mb-1">Customer</label>
+                <label className="block text-sm text-white/70 mb-1">{t('orders.form.customer', { defaultValue: 'Customer' })}</label>
                 <div className="flex items-center gap-4 mb-2">
                   <label className="flex items-center gap-2 text-white/80">
                     <input type="radio" name="custMode" value="existing" checked={!useNewCustomer} onChange={()=> setUseNewCustomer(false)} />
-                    <span>Existing</span>
+                    <span>{t('orders.form.existing', { defaultValue: 'Existing' })}</span>
                   </label>
                   <label className="flex items-center gap-2 text-white/80">
                     <input type="radio" name="custMode" value="new" checked={useNewCustomer} onChange={()=> setUseNewCustomer(true)} />
-                    <span>New</span>
+                    <span>{t('orders.form.new', { defaultValue: 'New' })}</span>
                   </label>
                 </div>
                 <div className="flex gap-2">
@@ -334,62 +336,62 @@ export default function Orders() {
                     onChange={(e)=> setForm(f => ({ ...f, customer_id: e.target.value }))}
                     className="flex-1 rounded bg-white border border-white/10 px-3 py-2 text-sm text-black"
                   >
-                    <option value="">Select customer…</option>
+                    <option value="">{t('orders.form.selectCustomer', { defaultValue: 'Select customer…' })}</option>
                     {customers.map(c => (
                       <option key={c.id} value={c.id}>{c.name || 'Unnamed'} {c.phone ? `(${c.phone})` : ''}</option>
                     ))}
                   </select>
-                  <button type="button" onClick={()=> setNewCustOpen(true)} className="rounded bg-white/10 border border-white/15 text-white/85 px-3 py-2 text-sm hover:bg-white/15">New Customer</button>
+                  <button type="button" onClick={()=> setNewCustOpen(true)} className="rounded bg-white/10 border border-white/15 text-white/85 px-3 py-2 text-sm hover:bg-white/15">{t('orders.form.newCustomer', { defaultValue: 'New Customer' })}</button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-white/70 mb-1">Garments & Measurements</label>
+                <label className="block text-sm text-white/70 mb-1">{t('orders.form.garments', { defaultValue: 'Garments & Measurements' })}</label>
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={()=> { setMeasureType('thobe'); setMeasureValues(thobeM); setMeasureOpen(true); setForm(f => ({ ...f, garment_category: 'thobe' })) }} className="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-white/5 border-white/10 text-white/85 hover:bg-white/10">
                     <span className={`inline-block h-3 w-3 rounded-full border ${Object.keys(thobeM||{}).length ? 'bg-sky-500 border-sky-500' : 'border-white/40'}`}></span>
-                    <span>Thobe</span>
+                    <span>{t('orders.form.thobe', { defaultValue: 'Thobe' })}</span>
                   </button>
                   {Object.keys(thobeM||{}).length > 0 && (
-                    <button type="button" onClick={()=> { setThobeM({}); if (measureType==='thobe') setMeasureValues({}); }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/70 hover:bg-white/10" title="Clear Thobe measurements for this order (does not delete customer profile)">Clear</button>
+                    <button type="button" onClick={()=> { setThobeM({}); if (measureType==='thobe') setMeasureValues({}); }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/70 hover:bg-white/10" title={t('orders.form.clearThobeTitle', { defaultValue: 'Clear Thobe measurements for this order (does not delete customer profile)' })}>{t('orders.form.clear', { defaultValue: 'Clear' })}</button>
                   )}
                   <button type="button" onClick={()=> { setMeasureType('sirwal_falina'); setMeasureValues(sirwalM); setMeasureOpen(true); setForm(f => ({ ...f, garment_category: 'sirwal_falina' })) }} className="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-white/5 border-white/10 text-white/85 hover:bg-white/10">
                     <span className={`inline-block h-3 w-3 rounded-full border ${Object.keys(sirwalM||{}).length ? 'bg-sky-500 border-sky-500' : 'border-white/40'}`}></span>
-                    <span>Sirwal / Falina</span>
+                    <span>{t('orders.form.sirwalFalina', { defaultValue: 'Sirwal / Falina' })}</span>
                   </button>
                   {Object.keys(sirwalM||{}).length > 0 && (
-                    <button type="button" onClick={()=> { setSirwalM({}); if (measureType==='sirwal_falina') setMeasureValues({}); }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/70 hover:bg-white/10" title="Clear Sirwal/Falina measurements for this order (does not delete customer profile)">Clear</button>
+                    <button type="button" onClick={()=> { setSirwalM({}); if (measureType==='sirwal_falina') setMeasureValues({}); }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/70 hover:bg-white/10" title={t('orders.form.clearSirwalTitle', { defaultValue: 'Clear Sirwal/Falina measurements for this order (does not delete customer profile)' })}>{t('orders.form.clear', { defaultValue: 'Clear' })}</button>
                   )}
-                  <button type="button" onClick={()=> setForm(f => ({ ...f, garment_category: '' }))} className={`ml-2 px-3 py-1.5 rounded-md border ${form.garment_category ? 'bg-white/5 border-white/10 text-white/85 hover:bg-white/10' : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`} title="Choose no primary garment for this order">None</button>
+                  <button type="button" onClick={()=> setForm(f => ({ ...f, garment_category: '' }))} className={`ml-2 px-3 py-1.5 rounded-md border ${form.garment_category ? 'bg-white/5 border-white/10 text-white/85 hover:bg-white/10' : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`} title={t('orders.form.noneTitle', { defaultValue: 'Choose no primary garment for this order' })}>{t('orders.form.none', { defaultValue: 'None' })}</button>
                 </div>
-                <div className="text-[11px] text-white/40 mt-1">Blue dot shows measurements present in this order. Use Clear to remove them for this order only. Saved customer measurements are not modified.</div>
+                <div className="text-[11px] text-white/40 mt-1">{t('orders.form.measureInfo', { defaultValue: 'Blue dot shows measurements present in this order. Use Clear to remove them for this order only. Saved customer measurements are not modified.' })}</div>
               </div>
 
               {/* Quantities per type */}
               <div className="grid grid-cols-2 gap-4 mt-2">
                 <div>
-                  <label className="block text-sm text-white/70 mb-1">Thobe quantity</label>
+                  <label className="block text-sm text-white/70 mb-1">{t('orders.form.qtyThobe', { defaultValue: 'Thobe quantity' })}</label>
                   <input type="number" min={0} value={form.quantity_thobe} onChange={(e)=> setForm(f => ({ ...f, quantity_thobe: e.target.value }))} className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white" />
                   <div className="mt-2 flex items-center gap-2">
-                    <button type="button" onClick={()=> { setExtraMode(true); setMeasureType('thobe'); setMeasureValues(thobeM); setMeasureOpen(true) }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/85 hover:bg-white/10">Add Extra Thobe +</button>
+                    <button type="button" onClick={()=> { setExtraMode(true); setMeasureType('thobe'); setMeasureValues(thobeM); setMeasureOpen(true) }} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/85 hover:bg-white/10">{t('orders.form.addExtraThobe', { defaultValue: 'Add Extra Thobe +' })}</button>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm text-white/70 mb-1">Sirwal / Falina quantity</label>
+                  <label className="block text-sm text-white/70 mb-1">{t('orders.form.qtySirwal', { defaultValue: 'Sirwal / Falina quantity' })}</label>
                   <input type="number" min={0} value={form.quantity_sirwal} onChange={(e)=> setForm(f => ({ ...f, quantity_sirwal: e.target.value }))} className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white" />
                 </div>
                 <div className="col-span-2">
                   {extraThobes.length > 0 && (
                     <div className="rounded border border-white/10 p-2 bg-white/[0.03]">
-                      <div className="text-sm text-white/80 mb-2">Extra Thobes</div>
+                      <div className="text-sm text-white/80 mb-2">{t('orders.form.extraThobes', { defaultValue: 'Extra Thobes' })}</div>
                       <div className="space-y-2">
                         {extraThobes.map((it, idx) => (
                           <div key={it.id} className="flex items-center justify-between gap-3">
-                            <div className="text-xs text-white/70">Set {idx+1}</div>
+                            <div className="text-xs text-white/70">{t('orders.form.setN', { defaultValue: 'Set {{n}}', n: idx+1 })}</div>
                             <div className="flex items-center gap-2">
-                              <label className="text-xs text-white/60">Qty</label>
+                              <label className="text-xs text-white/60">{t('orders.form.qty', { defaultValue: 'Qty' })}</label>
                               <input type="number" min={0} value={it.qty} onChange={(e)=> setExtraThobes(arr => arr.map(x => x.id===it.id ? { ...x, qty: e.target.value } : x))} className="w-20 rounded bg-white/5 border border-white/15 px-2 py-1 text-xs text-white" />
-                              <button title="Remove" onClick={()=> setExtraThobes(arr => arr.filter(x => x.id!==it.id))} className="px-2 py-1 text-xs rounded bg-red-500/10 border border-red-500/30 text-red-200">✕</button>
+                              <button title={t('orders.form.remove', { defaultValue: 'Remove' })} onClick={()=> setExtraThobes(arr => arr.filter(x => x.id!==it.id))} className="px-2 py-1 text-xs rounded bg-red-500/10 border border-red-500/30 text-red-200">✕</button>
                             </div>
                           </div>
                         ))}
@@ -400,15 +402,15 @@ export default function Orders() {
               </div>
 
               <div className="mt-3">
-                <label className="block text-sm text-white/70 mb-1">Notes</label>
-                <textarea rows={4} value={form.notes} onChange={(e)=> setForm(f => ({ ...f, notes: e.target.value }))} className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white" placeholder="Any special instructions…" />
+                <label className="block text-sm text-white/70 mb-1">{t('orders.form.notes', { defaultValue: 'Notes' })}</label>
+                <textarea rows={4} value={form.notes} onChange={(e)=> setForm(f => ({ ...f, notes: e.target.value }))} className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white" placeholder={t('orders.form.notesPlaceholder', { defaultValue: 'Any special instructions…' })} />
               </div>
 
-              <div className="text-xs text-white/50">Measurements are handled separately. You can record them in the Measurements module and link later if needed.</div>
+              <div className="text-xs text-white/50">{t('orders.form.measurementsNote', { defaultValue: 'Measurements are handled separately. You can record them in the Measurements module and link later if needed.' })}</div>
 
               <div className="pt-2 flex justify-end gap-2">
-                <button onClick={()=> setOpen(false)} className="rounded border border-white/10 px-4 py-2 text-white/80">Cancel</button>
-                <button disabled={saving} onClick={saveOrder} className="rounded bg-emerald-600 text-white px-4 py-2 disabled:opacity-60">{saving ? 'Saving…' : 'Create Order'}</button>
+                <button onClick={()=> setOpen(false)} className="rounded border border-white/10 px-4 py-2 text-white/80">{t('common.cancel', { defaultValue: 'Cancel' })}</button>
+                <button disabled={saving} onClick={saveOrder} className="rounded bg-emerald-600 text-white px-4 py-2 disabled:opacity-60">{saving ? t('common.saving', { defaultValue: 'Saving…' }) : t('orders.actions.createOrder', { defaultValue: 'Create Order' })}</button>
               </div>
             </div>
 
@@ -416,7 +418,7 @@ export default function Orders() {
               <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm" onClick={(e)=> { e.stopPropagation(); setNewCustOpen(false) }}>
                 <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-3xl rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl p-4" onClick={(e)=> e.stopPropagation()}>
                   <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                    <div className="text-white/90 font-medium">New Customer</div>
+                    <div className="text-white/90 font-medium">{t('orders.form.newCustomer', { defaultValue: 'New Customer' })}</div>
                     <button onClick={()=> setNewCustOpen(false)} className="px-2 py-1 rounded bg-white/10 border border-white/20">✕</button>
                   </div>
                   <div className="pt-4">

@@ -44,6 +44,9 @@ export default function Staff() {
   const [attStdDay, setAttStdDay] = useState(480) // minutes
   const [attMaxBreaks, setAttMaxBreaks] = useState(1)
   const [attBreakMins, setAttBreakMins] = useState(15)
+  const [attWorkdaysPerMonth, setAttWorkdaysPerMonth] = useState(26)
+  const [attOtMultiplier, setAttOtMultiplier] = useState(1.5)
+  const [attMaxOtPerDay, setAttMaxOtPerDay] = useState(2)
   const [attNotice, setAttNotice] = useState("")
 
   // invite form state
@@ -148,6 +151,9 @@ export default function Staff() {
         if (Number.isFinite(as.standard_day_minutes)) setAttStdDay(as.standard_day_minutes)
         if (Number.isFinite(as.max_breaks_per_day)) setAttMaxBreaks(as.max_breaks_per_day)
         if (Number.isFinite(as.break_minutes_per_break)) setAttBreakMins(as.break_minutes_per_break)
+        if (Number.isFinite(as.workdays_per_month)) setAttWorkdaysPerMonth(as.workdays_per_month)
+        if (Number.isFinite(as.ot_multiplier)) setAttOtMultiplier(as.ot_multiplier)
+        if (Number.isFinite(as.max_ot_hours_per_day)) setAttMaxOtPerDay(as.max_ot_hours_per_day)
       } catch {}
     })()
     return () => { cancelled = true }
@@ -499,6 +505,9 @@ export default function Staff() {
         standard_day_minutes: Math.max(60, Number(attStdDay) || 480), // Ensure minimum 1 hour (60 minutes)
         max_breaks_per_day: Math.max(0, Number(attMaxBreaks) || 0),
         break_minutes_per_break: Math.max(0, Number(attBreakMins) || 0),
+        workdays_per_month: Math.max(1, Number(attWorkdaysPerMonth) || 26),
+        ot_multiplier: Math.max(1, Number(attOtMultiplier) || 1.5),
+        max_ot_hours_per_day: Math.max(0, Number(attMaxOtPerDay) || 0),
       }
       const { error } = await supabase
         .from('user_settings')
@@ -880,15 +889,12 @@ export default function Staff() {
                 <div className="text-[11px] text-slate-400 mb-1">Standard shift length (hours)</div>
                 <input
                   type="number"
-                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
-                  value={Math.round(attStdDay / 60 * 10) / 10}
-                  onChange={(e)=>{
-                    const hours = parseFloat(e.target.value);
-                    setAttStdDay(Math.round(hours * 60) || 480);
-                  }}
                   step="0.5"
                   min="1"
                   max="24"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={Math.round((attStdDay/60)*100)/100}
+                  onChange={(e)=> setAttStdDay(Math.max(60, Number(e.target.value||8)*60))}
                 />
               </div>
               <div>
@@ -897,22 +903,56 @@ export default function Staff() {
                   type="number"
                   className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
                   value={attMaxBreaks}
-                  onChange={(e)=>setAttMaxBreaks(e.target.value)}
+                  onChange={(e)=> setAttMaxBreaks(Math.max(0, Number(e.target.value||0)))}
                 />
               </div>
               <div>
-                <div className="text-[11px] text-slate-400 mb-1">Minutes per break</div>
+                <div className="text-[11px] text-slate-400 mb-1">Break minutes per break</div>
                 <input
                   type="number"
                   className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
                   value={attBreakMins}
-                  onChange={(e)=>setAttBreakMins(e.target.value)}
+                  onChange={(e)=> setAttBreakMins(Math.max(0, Number(e.target.value||0)))}
+                />
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">Workdays per month</div>
+                <input
+                  type="number"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={attWorkdaysPerMonth}
+                  onChange={(e)=> setAttWorkdaysPerMonth(Math.max(1, Number(e.target.value||26)))}
+                />
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">OT multiplier (x)</div>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={attOtMultiplier}
+                  onChange={(e)=> setAttOtMultiplier(Math.max(1, Number(e.target.value||1.5)))}
+                />
+              </div>
+              <div>
+                <div className="text-[11px] text-slate-400 mb-1">Max OT hours per day</div>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  className="w-full px-3 py-2 rounded-md bg-white/5 border border-white/10 text-sm"
+                  value={attMaxOtPerDay}
+                  onChange={(e)=> setAttMaxOtPerDay(Math.max(0, Number(e.target.value||0)))}
                 />
               </div>
             </div>
-            <div className="mt-4 flex items-center gap-3">
-              <button onClick={saveAttendanceRules} className="px-3 py-2 rounded-md text-sm pill-active glow">Save Attendance Rules</button>
-              {attNotice && <span className="text-xs text-slate-300">{attNotice}</span>}
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={saveAttendanceRules}
+                className="px-3 py-2 rounded-md pill-active glow"
+              >Save Rules</button>
+              {attNotice && <div className="text-xs text-amber-300">{attNotice}</div>}
             </div>
           </div>
         )}

@@ -70,6 +70,9 @@ export default function Settings() {
   const [autoInvoice, setAutoInvoice] = useState(false)
   const [paymentTerms, setPaymentTerms] = useState("")
   const [invoiceFooter, setInvoiceFooter] = useState("Thank you for your business")
+  const [savingInvoice, setSavingInvoice] = useState(false)
+  const [invoiceNotice, setInvoiceNotice] = useState("")
+  const [invoiceError, setInvoiceError] = useState("")
 
   // Notification prefs (from public.user_settings)
   const [emailNotif, setEmailNotif] = useState(false)
@@ -661,15 +664,39 @@ export default function Settings() {
 
   async function saveInvoice() {
     if (!userRow) return
-    const invoice = {
-      tax_rate: Number(taxRate) || 0,
-      currency,
-      auto_generate_numbers: !!autoInvoice,
-      payment_terms: paymentTerms || null,
-      footer: invoiceFooter || null,
+    try {
+      setSavingInvoice(true)
+      setInvoiceNotice("")
+      setInvoiceError("")
+      const invoice = {
+        tax_rate: Number(taxRate) || 0,
+        currency,
+        auto_generate_numbers: !!autoInvoice,
+        payment_terms: paymentTerms || null,
+        footer: invoiceFooter || null,
+      }
+      const { error } = await supabase.rpc('api_user_settings_set_invoice', { p_invoice: invoice })
+      if (error) throw error
+      setInvoiceNotice(t('invoice.savedNotice') || 'Invoice settings saved')
+      // Notify other parts of the app about currency change
+      try {
+        const detail = { currency }
+        window.dispatchEvent(new CustomEvent('invoice-settings-updated', { detail }))
+        document.dispatchEvent(new CustomEvent('invoice-settings-updated', { detail }))
+        try {
+          const bc = new BroadcastChannel('app_events')
+          bc.postMessage({ type: 'invoice-settings-updated', currency, ts: Date.now() })
+          bc.close()
+        } catch {}
+      } catch {}
+      setTimeout(() => setInvoiceNotice(''), 2500)
+    } catch (e) {
+      console.error('saveInvoice failed', e)
+      setInvoiceError(e?.message || (t('invoice.saveFailed') || 'Failed to save invoice settings'))
+      setTimeout(() => setInvoiceError(''), 3500)
+    } finally {
+      setSavingInvoice(false)
     }
-    // Set invoice via secured RPC
-    await supabase.rpc('api_user_settings_set_invoice', { p_invoice: invoice })
   }
 
   async function saveNotifications() {
@@ -993,7 +1020,7 @@ export default function Settings() {
           </div>
           <div>
             <label className="text-xs uppercase tracking-wide text-slate-400">{t('invoice.currency')}</label>
-            <select className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" value={currency} onChange={(e)=>setCurrency(e.target.value)}>
+            <select className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm select-light" value={currency} onChange={(e)=>setCurrency(e.target.value)}>
               <option value="KWD (د.ك) - Kuwaiti Dinar">KWD (د.ك) - Kuwaiti Dinar</option>
               <option>USD ($) - US Dollar</option>
               <option>SAR (ر.س) - Saudi Riyal</option>
@@ -1016,8 +1043,12 @@ export default function Settings() {
             <textarea className="mt-2 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm" rows="3" placeholder={t('invoice.invoiceFooterPlaceholder')} value={invoiceFooter} onChange={(e)=>setInvoiceFooter(e.target.value)} />
           </div>
         </div>
-        <div className="mt-6 flex justify-end">
-          <button onClick={saveInvoice} disabled={loading || !userRow?.id} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{t('invoice.saveInvoiceSettings')}</button>
+        <div className="mt-6 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-xs">
+            {invoiceNotice && <span className="text-emerald-300/90">{invoiceNotice}</span>}
+            {invoiceError && <span className="text-rose-300/90">{invoiceError}</span>}
+          </div>
+          <button onClick={saveInvoice} disabled={loading || !userRow?.id || savingInvoice} className="px-3 py-1.5 rounded-md text-xs pill-active glow disabled:opacity-50">{savingInvoice ? (t('invoice.saving') || 'Saving…') : t('invoice.saveInvoiceSettings')}</button>
         </div>
       </section>
       )}

@@ -67,14 +67,14 @@ const SupplierManager = ({ suppliers, onSave, onClose, initialData }) => {
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-md rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-2xl max-h-[85vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <div className="text-white/90 font-medium">
             {initialData?.id ? 'Edit' : 'Add'} Supplier
           </div>
           <button onClick={onClose} className="px-2 py-1 rounded bg-white/10 border border-white/20">✕</button>
         </div>
-        <div className="p-4 space-y-3 text-sm">
+        <div className="p-4 space-y-3 text-sm flex-1 overflow-y-auto">
           <div>
             <label className="block text-white/70 mb-1">Name</label>
             <input 
@@ -138,6 +138,101 @@ const SupplierManager = ({ suppliers, onSave, onClose, initialData }) => {
             </div>
           </div>
           
+          {/* Address */}
+          <div className="pt-2 border-t border-white/10">
+            <h4 className="text-white/80 text-sm font-medium mb-2">Address</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-white/70 mb-1">Street</label>
+                <input value={street} onChange={e=>setStreet(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-white/70 mb-1">City</label>
+                  <input value={city} onChange={e=>setCity(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+                </div>
+                <div>
+                  <label className="block text-white/70 mb-1">Country</label>
+                  <input value={country} onChange={e=>setCountry(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Payment */}
+          <div className="pt-2 border-t border-white/10">
+            <h4 className="text-white/80 text-sm font-medium mb-2">Payment</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="block text-white/70 mb-1">Payment Info</label>
+                <input value={paymentInfo} onChange={e=>setPaymentInfo(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. IBAN / Account details" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">Terms</label>
+                <select value={paymentTerms} onChange={e=>setPaymentTerms(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                  <option>Net 15</option>
+                  <option>Net 30</option>
+                  <option>Net 45</option>
+                  <option>Due on Receipt</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="block text-white/70 mb-1">Type</label>
+              <select value={paymentType} onChange={e=>setPaymentType(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                <option value="cash">Cash</option>
+                <option value="bank">Bank Transfer</option>
+                <option value="card">Card</option>
+                <option value="cheque">Cheque</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Communication Preferences */}
+          <div className="pt-2 border-t border-white/10">
+            <h4 className="text-white/80 text-sm font-medium mb-2">Communication Preferences</h4>
+            <div className="flex items-center gap-4 text-white/90">
+              <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4" checked={prefWhatsApp} onChange={e=>setPrefWhatsApp(e.target.checked)} /> WhatsApp</label>
+              <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4" checked={prefEmail} onChange={e=>setPrefEmail(e.target.checked)} /> Email</label>
+              <label className="flex items-center gap-2"><input type="checkbox" className="h-4 w-4" checked={prefPortal} onChange={e=>setPrefPortal(e.target.checked)} /> Portal</label>
+            </div>
+          </div>
+
+          {/* Contract & Supply */}
+          <div className="pt-2 border-t border-white/10">
+            <h4 className="text-white/80 text-sm font-medium mb-2">Contract & Supply</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-white/70 mb-1">Contract Ref</label>
+                <input value={contractRef} onChange={e=>setContractRef(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">Supply Timeframe</label>
+                <select value={supplyTimeframe} onChange={e=>setSupplyTimeframe(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                  <option value="as_needed">As needed</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Performance (optional) */}
+          <div className="pt-2 border-t border-white/10">
+            <h4 className="text-white/80 text-sm font-medium mb-2">Performance</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-white/70 mb-1">Quality %</label>
+                <input type="number" value={qualityPct} onChange={e=>setQualityPct(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 95" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">On-Time %</label>
+                <input type="number" value={onTimePct} onChange={e=>setOnTimePct(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 90" />
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-end gap-2 pt-4">
             <button 
               type="button" 

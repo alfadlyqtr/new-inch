@@ -119,19 +119,101 @@ export default function Dashboard() {
     return () => { cancelled = true }
   }, [])
 
+  // Live metrics
+  const [metrics, setMetrics] = useState({ orders: 0, customers: 0, revenue: 0, pending: 0, lowStock: 0 })
+
   // Permission-aware stats (only show modules the staff can view)
   const canViewOrders = useCan('orders', 'view')
   const canViewCustomers = useCan('customers', 'view')
   const canViewInvoices = useCan('invoices', 'view')
   const canViewInventory = useCan('inventory', 'view')
 
+  useEffect(() => {
+    if (!businessId || businessId === '—') return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const queries = []
+        // total orders
+        queries.push(
+          supabase.from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId)
+            .then(res => ({ key: 'orders', value: res.count || 0 }))
+            .catch(() => ({ key: 'orders', value: 0 }))
+        )
+        // customers
+        queries.push(
+          supabase.from('customers')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId)
+            .then(res => ({ key: 'customers', value: res.count || 0 }))
+            .catch(() => ({ key: 'customers', value: 0 }))
+        )
+        // pending orders
+        queries.push(
+          supabase.from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId)
+            .in('status', ['pending','processing'])
+            .then(res => ({ key: 'pending', value: res.count || 0 }))
+            .catch(() => ({ key: 'pending', value: 0 }))
+        )
+        // revenue (sum invoices.total or amount)
+        queries.push(
+          supabase.from('invoices')
+            .select('total')
+            .eq('business_id', businessId)
+            .then(res => {
+              const rows = Array.isArray(res.data) ? res.data : []
+              const sum = rows.reduce((acc, r) => acc + Number(r.total || r.amount || 0), 0)
+              return { key: 'revenue', value: sum }
+            })
+            .catch(() => ({ key: 'revenue', value: 0 }))
+        )
+        // low stock count (sum by item where total <= 0)
+        queries.push(
+          supabase.from('v_stock_on_hand')
+            .select('item_id, qty_on_hand')
+            .eq('business_id', businessId)
+            .then(res => {
+              const rows = Array.isArray(res.data) ? res.data : []
+              const totals = new Map()
+              for (const r of rows) {
+                const id = r.item_id
+                const q = Number(r.qty_on_hand || 0)
+                totals.set(id, (totals.get(id) || 0) + q)
+              }
+              const low = Array.from(totals.values()).filter(v => v <= 0).length
+              return { key: 'lowStock', value: low }
+            })
+            .catch(() => ({ key: 'lowStock', value: 0 }))
+        )
+        const results = await Promise.all(queries)
+        if (cancelled) return
+        const next = { ...metrics }
+        for (const r of results) next[r.key] = r.value
+        setMetrics(next)
+      } catch {
+        if (!cancelled) setMetrics({ orders: 0, customers: 0, revenue: 0, pending: 0, lowStock: 0 })
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessId])
+
+  const fmtMoney = (n) => {
+    const v = Number(n || 0)
+    if (!Number.isFinite(v)) return "$0"
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v)
+  }
   const stats = [
-    { label: t('dashboard.totalOrders'), value: 0, icon: "📦", can: canViewOrders },
-    { label: t('dashboard.totalCustomers'), value: 0, icon: "👥", can: canViewCustomers },
+    { label: t('dashboard.totalOrders'), value: metrics.orders, icon: "📦", can: canViewOrders },
+    { label: t('dashboard.totalCustomers'), value: metrics.customers, icon: "👥", can: canViewCustomers },
     // Revenue typically relates to invoices; if you prefer orders, switch to canViewOrders
-    { label: t('dashboard.totalRevenue'), value: "$0", icon: "💵", can: canViewInvoices },
-    { label: t('dashboard.pendingOrders'), value: 0, icon: "⏳", can: canViewOrders },
-    { label: t('dashboard.lowStockItems'), value: 0, icon: "⚠️", can: canViewInventory },
+    { label: t('dashboard.totalRevenue'), value: fmtMoney(metrics.revenue), icon: "💵", can: canViewInvoices },
+    { label: t('dashboard.pendingOrders'), value: metrics.pending, icon: "⏳", can: canViewOrders },
+    { label: t('dashboard.lowStockItems'), value: metrics.lowStock, icon: "⚠️", can: canViewInventory },
   ]
   const visibleStats = stats.filter(s => s.can)
 
