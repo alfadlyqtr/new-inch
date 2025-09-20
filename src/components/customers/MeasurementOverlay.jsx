@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState } from "react"
   - values: { chest, waist, sleeve_length, neck, inseam, outseam, hips, shoulders, length }
   - onChange: (key, value) => void
 */
-export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate, unit = 'cm', allowedFixedKeys = null, extraFixed = [], annotations = {}, onAnnotationsChange }) {
+export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "/measurements/garment.png", fallbackUrls = [], aspectPercent = 100, points = [], onAddPoint, onUpdatePoint, onRemovePoint, addMode = true, moveFixed = false, fixedPositions = {}, onFixedUpdate, unit = 'cm', allowedFixedKeys = null, extraFixed = [], annotations = {}, onAnnotationsChange, minimal = false }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(null)
   const [src, setSrc] = useState(imageUrl)
@@ -26,7 +26,10 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   const [selectedArrowId, setSelectedArrowId] = useState(null)
   const [selectedAngleId, setSelectedAngleId] = useState(null)
   const [selectedNoteId, setSelectedNoteId] = useState(null)
-  const [layers, setLayers] = useState({ labels: true, points: true, dims: true, circles: true, arrows: true, angles: false, notes: false })
+  const [layers, setLayers] = useState(() => minimal
+    ? { labels: false, points: false, dims: false, circles: false, arrows: false, angles: false, notes: false }
+    : { labels: true, points: true, dims: true, circles: true, arrows: true, angles: false, notes: false }
+  )
   const [showTools, setShowTools] = useState(false)
   const [showLayers, setShowLayers] = useState(false)
 
@@ -743,7 +746,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           ) : null
         ))}
 
-        {!error && loaded && (
+        {!minimal && !error && loaded && (
           <div className="absolute right-2 top-2 flex items-center gap-2">
             <div className="relative">
               <button type="button" onClick={()=> { setShowTools(o=>!o); setShowLayers(false) }} className="text-[11px] px-2 py-1 rounded bg-white/10 border border-white/20 text-white/80">Tools ▾</button>
@@ -901,7 +904,9 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
           )
         })()}
       </div>
-      <div className="text-xs text-slate-400 mt-2">Tip: values accept numbers; units are managed in the form (cm/in).</div>
+      {!minimal && (
+        <div className="text-xs text-slate-400 mt-2">Tip: values accept numbers; units are managed in the form (cm/in).</div>
+      )}
     </div>
   )
 }

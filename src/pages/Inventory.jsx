@@ -9,12 +9,26 @@ import ItemManager from "../components/inventory/ItemManager.jsx";
 const TABS = {
   ITEMS: 'items',
   SUPPLIERS: 'suppliers',
-  RECEIPTS: 'receipts'
+  RECEIPTS: 'receipts',
+  PRICING: 'pricing',
 };
+
+// Currency options (labels match Settings Invoice select)
+const CURRENCIES = [
+  { code: 'KWD', label: 'KWD (د.ك) - Kuwaiti Dinar' },
+  { code: 'USD', label: 'USD ($) - US Dollar' },
+  { code: 'SAR', label: 'SAR (ر.س) - Saudi Riyal' },
+  { code: 'AED', label: 'AED (د.إ) - UAE Dirham' },
+  { code: 'BHD', label: 'BHD (د.ب) - Bahraini Dinar' },
+  { code: 'QAR', label: 'QAR (ر.ق) - Qatari Riyal' },
+  { code: 'OMR', label: 'OMR (ر.ع) - Omani Rial' },
+]
+const codeToLabel = (code) => CURRENCIES.find(c => c.code === code)?.label || code
+const labelToCode = (label) => CURRENCIES.find(c => c.label === label)?.code || label
 
 export default function Inventory() {
   const canView = useCan('inventory', 'view');
-  const [ids, setIds] = useState({ business_id: null, user_id: null });
+  const [ids, setIds] = useState({ business_id: null, user_id: null, users_app_id: null });
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
   const [stock, setStock] = useState([]);
@@ -25,6 +39,16 @@ export default function Inventory() {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("");
   const [tab, setTab] = useState(TABS.ITEMS);
+  // Pricing settings state (from user_settings.pricing_settings)
+  const [pricingLoaded, setPricingLoaded] = useState(false);
+  const [pricingCurrency, setPricingCurrency] = useState('SAR');
+  const [priceThobe, setPriceThobe] = useState('');
+  const [priceSirwal, setPriceSirwal] = useState('');
+  const [priceFalina, setPriceFalina] = useState('');
+  const [markupPct, setMarkupPct] = useState('');
+  const [pricingNotice, setPricingNotice] = useState('');
+  const [garments, setGarments] = useState([]); // [{name, price}]
+  const [promotions, setPromotions] = useState([]); // [{code,type:'percent'|'fixed',amount,active,valid_from,valid_to,min_order}]
   const [ratingFilter, setRatingFilter] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -48,12 +72,12 @@ export default function Inventory() {
       
       const { data: ua } = await supabase
         .from('users_app')
-        .select('business_id')
+        .select('id, business_id')
         .eq('auth_user_id', user.id)
         .maybeSingle();
         
       if (ua?.business_id) {
-        setIds({ business_id: ua.business_id, user_id: user.id });
+        setIds({ business_id: ua.business_id, user_id: user.id, users_app_id: ua.id });
       }
     };
     fetchSession();
@@ -72,7 +96,8 @@ export default function Inventory() {
           { data: lc },
           { data: locs },
           { data: sups },
-          { data: rec }
+          { data: rec },
+          { data: us }
         ] = await Promise.all([
           supabase
             .from('inventory_items')
@@ -102,7 +127,16 @@ export default function Inventory() {
             .select('*')
             .eq('business_id', ids.business_id)
             .eq('type', 'receipt')
-            .order('created_at', { ascending: false })
+            .order('created_at', { ascending: false }),
+          (async () => {
+            if (!ids.users_app_id) return null;
+            const { data } = await supabase
+              .from('user_settings')
+              .select('pricing_settings, invoice_settings')
+              .eq('user_id', ids.users_app_id)
+              .maybeSingle();
+            return data || null;
+          })()
         ]);
         
         setItems(it || []);
@@ -111,6 +145,23 @@ export default function Inventory() {
         setLocations(locs || []);
         setSuppliers(sups || []);
         setReceipts(rec || []);
+        // Hydrate pricing settings
+        try {
+          const ps = us?.pricing_settings || {};
+          const inv = us?.invoice_settings || {};
+          // Always keep these states as labels to match Settings dropdowns
+          const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR')
+          setPricingCurrency(invCurLabel);
+          const pSell = ps?.default_sell_currency || 'SAR'
+          setDefaultSellCurrency(CURRENCIES.some(c => c.label === pSell) ? pSell : codeToLabel(pSell));
+          setPriceThobe(ps?.thobe_price ?? '');
+          setPriceSirwal(ps?.sirwal_price ?? '');
+          setPriceFalina(ps?.falina_price ?? '');
+          setMarkupPct(ps?.inventory_markup_pct ?? '');
+          setPromotions(Array.isArray(ps?.promotions) ? ps.promotions : []);
+          setGarments(Array.isArray(ps?.garments) ? ps.garments : []);
+          setPricingLoaded(true);
+        } catch {}
       } catch (error) {
         console.error('Error fetching inventory data:', error);
       } finally { 
@@ -120,6 +171,56 @@ export default function Inventory() {
     
     fetchInventoryData();
   }, [ids.business_id]);
+
+  // Hydrate pricing settings as soon as users_app_id is available (independent of inventory data)
+  useEffect(() => {
+    if (!ids.users_app_id) return;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('user_settings')
+          .select('pricing_settings, invoice_settings')
+          .eq('user_id', ids.users_app_id)
+          .maybeSingle();
+        const ps = data?.pricing_settings || {};
+        const inv = data?.invoice_settings || {};
+        const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR');
+        setPricingCurrency(invCurLabel);
+        setPriceThobe(ps?.thobe_price ?? '');
+        setPriceSirwal(ps?.sirwal_price ?? '');
+        setPriceFalina(ps?.falina_price ?? '');
+        setMarkupPct(ps?.inventory_markup_pct ?? '');
+        setPromotions(Array.isArray(ps?.promotions) ? ps.promotions : []);
+        setGarments(Array.isArray(ps?.garments) ? ps.garments : []);
+      } catch {}
+    })();
+  }, [ids.users_app_id]);
+
+  // Live-sync pricing currency with Settings invoice currency updates
+  useEffect(() => {
+    const onUpdated = (e) => {
+      const cur = e?.detail?.currency;
+      if (typeof cur === 'string' && cur) {
+        setPricingCurrency(cur);
+      }
+    };
+    window.addEventListener('invoice-settings-updated', onUpdated);
+    document.addEventListener('invoice-settings-updated', onUpdated);
+    let bc;
+    try {
+      bc = new BroadcastChannel('app_events');
+      bc.onmessage = (m) => {
+        if (m?.data?.type === 'invoice-settings-updated' && typeof m?.data?.currency === 'string') {
+          setPricingCurrency(m.data.currency);
+        }
+      };
+    } catch {}
+    return () => {
+      window.removeEventListener('invoice-settings-updated', onUpdated);
+      document.removeEventListener('invoice-settings-updated', onUpdated);
+      try { if (bc) { bc.onmessage = null; bc.close(); } } catch {}
+    };
+  }, [pricingCurrency]);
 
   // Memoized calculations
   const stockByItem = useMemo(() => {
@@ -425,6 +526,12 @@ export default function Inventory() {
         >
           Receipts
         </button>
+        <button
+          className={`px-4 py-2 font-medium ${tab === TABS.PRICING ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-white/70 hover:text-white'}`}
+          onClick={() => setTab(TABS.PRICING)}
+        >
+          Pricing
+        </button>
       </div>
       
       {/* Tab Content */}
@@ -451,6 +558,13 @@ export default function Inventory() {
                   </option>
                 ))}
               </select>
+              <button
+                onClick={() => setTab(TABS.PRICING)}
+                className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg transition-colors"
+                title="Open Pricing Management"
+              >
+                Pricing Management
+              </button>
               <PermissionGate module="inventory" action="create">
                 <button
                   onClick={() => setAddOpen(true)}
@@ -460,7 +574,7 @@ export default function Inventory() {
                 </button>
               </PermissionGate>
             </div>
-            
+
             <InventoryItems 
               items={filteredItems}
               stockByItem={stockByItem}
@@ -487,6 +601,169 @@ export default function Inventory() {
         {tab === TABS.RECEIPTS && (
           <div className="text-white/70">
             Receipts view is under construction.
+          </div>
+        )}
+
+        {tab === TABS.PRICING && (
+          <div className="text-white/90 space-y-4">
+            <div className="text-lg font-semibold">Pricing Management</div>
+            <div className="text-white/70 text-sm">Defaults applied to new Orders and as presets in Inventory.</div>
+            {/* Toolbar: all actions in one line */}
+            <div className="flex flex-wrap items-center justify-between md:justify-end gap-2">
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={()=> setGarments(gs => ([...gs, { name: '', price: '' }]))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">+ Add garment</button>
+                <button type="button" onClick={() => setPromotions(p => ([...p, { code: '', type: 'percent', amount: '', active: true, valid_from: '', valid_to: '', min_order: '' }]))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">+ Add promo</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!ids.users_app_id) return;
+                    try {
+                      setPricingNotice('');
+                      const payload = {
+                        pricing_settings: {
+                          // currency values come only from Settings (Invoice). Save pricing numbers only here.
+                          inventory_markup_pct: Number(markupPct) || 0,
+                          thobe_price: priceThobe === '' ? null : Number(priceThobe),
+                          sirwal_price: priceSirwal === '' ? null : Number(priceSirwal),
+                          falina_price: priceFalina === '' ? null : Number(priceFalina),
+                          garments: garments.map(g => ({ name: (g.name || '').trim(), price: g.price === '' ? null : Number(g.price) })).filter(g => g.name),
+                          promotions: promotions.map(p => ({
+                            code: (p.code || '').toUpperCase().trim(),
+                            type: p.type === 'fixed' ? 'fixed' : 'percent',
+                            amount: p.amount === '' ? null : Number(p.amount),
+                            min_order: p.min_order === '' ? null : Number(p.min_order),
+                            valid_from: p.valid_from || null,
+                            valid_to: p.valid_to || null,
+                            active: !!p.active,
+                          })),
+                        }
+                      };
+                      const { error } = await supabase
+                        .from('user_settings')
+                        .upsert({ user_id: ids.users_app_id, ...payload }, { onConflict: 'user_id' });
+                      if (error) throw error;
+                      setPricingNotice('Pricing defaults saved');
+                      setTimeout(()=> setPricingNotice(''), 2000);
+                    } catch (e) {
+                      setPricingNotice(e?.message || 'Failed to save');
+                      setTimeout(()=> setPricingNotice(''), 2500);
+                    }
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
+                >
+                  Save Pricing
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-white/70 mb-1">Default Currency</label>
+                <select disabled value={pricingCurrency || ''} onChange={()=>{}} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                  {CURRENCIES.map(c => (
+                    <option key={c.code} value={c.label}>{c.label}</option>
+                  ))}
+                </select>
+                <div className="text-[11px] text-white/50 mt-1">Change currency in Settings → Invoice.</div>
+              </div>
+              {/* Default Sell Currency is managed in Settings only */}
+              <div>
+                <label className="block text-white/70 mb-1">Default Markup (%)</label>
+                <input type="number" value={markupPct} onChange={(e)=> setMarkupPct(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 25" />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-white/70 mb-1">Thobe Price</label>
+                <input type="number" value={priceThobe} onChange={(e)=> setPriceThobe(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 120" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">Sirwal Price</label>
+                <input type="number" value={priceSirwal} onChange={(e)=> setPriceSirwal(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 60" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">Falina Price</label>
+                <input type="number" value={priceFalina} onChange={(e)=> setPriceFalina(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 60" />
+              </div>
+            </div>
+            {/* Extra garments with default prices */}
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-white/85 font-medium">Additional Garments</div>
+              </div>
+              {garments.length === 0 ? (
+                <div className="text-white/60 text-sm">No additional garments.</div>
+              ) : (
+                <div className="space-y-2">
+                  {garments.map((g, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end p-3 rounded-lg bg-white/5 border border-white/10">
+                      <div className="md:col-span-3">
+                        <label className="block text-white/70 mb-1">Garment name</label>
+                        <input value={g.name} onChange={(e)=> setGarments(arr => arr.map((x,i)=> i===idx ? { ...x, name: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. Abaya" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-white/70 mb-1">Default price</label>
+                        <input type="number" value={g.price} onChange={(e)=> setGarments(arr => arr.map((x,i)=> i===idx ? { ...x, price: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 180" />
+                      </div>
+                      <div className="md:col-span-1 flex items-end justify-end">
+                        <button type="button" onClick={()=> setGarments(arr => arr.filter((_,i)=> i!==idx))} className="text-xs text-red-300 hover:text-red-200">Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Discounts & Promo Codes (moved into Pricing tab) */}
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-white/85 font-medium">Discounts & Promo Codes</div>
+              </div>
+              {promotions.length === 0 ? (
+                <div className="text-white/60 text-sm">No promos yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {promotions.map((pr, idx) => (
+                    <div key={idx} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+                        <div>
+                          <label className="block text-white/70 mb-1">Code</label>
+                          <input value={pr.code} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, code: e.target.value.toUpperCase() } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white uppercase" placeholder="e.g. SAVE10" />
+                        </div>
+                        <div>
+                          <label className="block text-white/70 mb-1">Type</label>
+                          <select value={pr.type} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, type: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                            <option value="percent">Percent %</option>
+                            <option value="fixed">Fixed</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-white/70 mb-1">Amount</label>
+                          <input type="number" value={pr.amount} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, amount: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder={pr.type==='percent' ? 'e.g. 10' : 'e.g. 20'} />
+                        </div>
+                        <div>
+                          <label className="block text-white/70 mb-1">Min order</label>
+                          <input type="number" value={pr.min_order || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, min_order: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="optional" />
+                        </div>
+                        <div>
+                          <label className="block text-white/70 mb-1">Valid from</label>
+                          <input type="date" value={pr.valid_from || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, valid_from: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-white/70 mb-1">Valid to</label>
+                          <input type="date" value={pr.valid_to || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, valid_to: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <label className="inline-flex items-center gap-2 text-white/80"><input type="checkbox" checked={!!pr.active} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, active: !!e.target.checked } : x))} /> Active</label>
+                        <button type="button" onClick={()=> setPromotions(arr => arr.filter((_,i)=> i!==idx))} className="text-xs text-red-300 hover:text-red-200">Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Notice area below toolbar */}
+            {pricingNotice && (<div className="text-xs text-emerald-300">{pricingNotice}</div>)}
           </div>
         )}
       </div>

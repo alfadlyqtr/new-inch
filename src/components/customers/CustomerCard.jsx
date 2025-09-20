@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Tabs } from "../ui/tabs.jsx"
 import MeasurementOverlay from "./MeasurementOverlay.jsx"
 import { supabase } from "../../lib/supabaseClient.js"
+import { loadMeasurementsForCustomer } from "../../lib/measurementsStorage.js"
 
 export default function CustomerCard({ c, onEdit, onDeleted }) {
   const { t } = useTranslation()
@@ -17,6 +18,7 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   const [editMode, setEditMode] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [businessName, setBusinessName] = useState("")
 
   // Details form state (mirrors NewCustomerForm fields)
   const [details, setDetails] = useState(() => ({
@@ -38,6 +40,56 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   }))
 
   const setD = (k, v) => setDetails(d => ({ ...d, [k]: v }))
+
+  // Load business name for code generation and react to updates from Settings
+  useEffect(() => {
+    try {
+      const n = localStorage.getItem('company_name') || ''
+      if (n) setBusinessName(n)
+    } catch {}
+    const handler = (e) => { const n = e?.detail?.name || ''; if (n) setBusinessName(n) }
+    window.addEventListener('business-name-updated', handler)
+    document.addEventListener('business-name-updated', handler)
+    return () => {
+      window.removeEventListener('business-name-updated', handler)
+      document.removeEventListener('business-name-updated', handler)
+    }
+  }, [])
+
+  const computeCustomerCode = (bizName, custName, phone) => {
+    const biz = String(bizName||'').replace(/\s+/g,'').toUpperCase()
+    const nm = String(custName||'').replace(/\s+/g,'').toUpperCase().slice(0,3)
+    const last4 = String(phone||'').replace(/[^0-9]/g,'').slice(-4)
+    if (!biz || !nm || !last4) return ''
+    return `${biz}${nm}${last4}`
+  }
+
+  // Live-refresh measurements when Orders wizard saves
+  useEffect(() => {
+    function onEvt(e){
+      const det = e?.detail
+      if (det?.customerId === c.id && det?.measurements) {
+        setMeasurements(det.measurements)
+      }
+    }
+    window.addEventListener('customer-measurements-updated', onEvt)
+    document.addEventListener('customer-measurements-updated', onEvt)
+    let bc
+    try {
+      bc = new BroadcastChannel('app_events')
+      bc.onmessage = (msg) => {
+        const d = msg?.data
+        if (d?.type === 'customer-measurements-updated' && d.customerId === c.id && d.measurements) {
+          setMeasurements(d.measurements)
+        }
+      }
+    } catch {}
+    return () => {
+      window.removeEventListener('customer-measurements-updated', onEvt)
+      document.removeEventListener('customer-measurements-updated', onEvt)
+      try { bc && bc.close() } catch {}
+    }
+  }, [c.id])
 
   async function saveDetails(){
     try {
@@ -129,19 +181,33 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   const mTimer = useRef(null)
   const nTimer = useRef(null)
 
-  // Load fresh measurements/notes on mount (hydrate if provided in DB)
+  // Load fresh measurements/notes on mount (hydrate from DB; if empty, fallback to Storage 'latest')
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       if (!c?.id) return
+      // 1) Try DB column
       const { data, error } = await supabase
         .from('customers')
         .select('measurements, preferences')
         .eq('id', c.id)
         .maybeSingle()
       if (!cancelled && !error && data) {
-        if (data.measurements) setMeasurements(data.measurements)
+        const hasDbMsr = !!data.measurements && Object.keys(data.measurements || {}).length > 0
+        if (hasDbMsr) setMeasurements(data.measurements)
         if (data.preferences && typeof data.preferences.notes === 'string') setNotes(data.preferences.notes)
+        // 2) Fallback: load latest from Storage if DB empty
+        if (!hasDbMsr) {
+          try {
+            const bizName = (() => { try { return localStorage.getItem('company_name') || '' } catch { return '' } })()
+            const metaBiz = { businessName: bizName, businessId: c.business_id }
+            const metaCust = { name: c.name, phone: c.phone, id: c.id }
+            const latestThobe = await loadMeasurementsForCustomer(metaBiz, metaCust, 'thobe', { orderId: null })
+            if (!cancelled && latestThobe && Object.keys(latestThobe || {}).length > 0) {
+              setMeasurements(prev => ({ ...prev, thobe: latestThobe }))
+            }
+          } catch {}
+        }
       }
     })()
     return () => { cancelled = true }
@@ -410,24 +476,19 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center text-white/90 font-semibold">
-            {initial}
-          </div>
+          <div className="h-10 w-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center text-white/90 font-semibold">{initial}</div>
           <div>
             <div className="flex items-center gap-2">
               <div className="text-white font-semibold">{name}</div>
-              <span className="text-[11px] bg-white/10 border border-white/15 text-white/80 px-1.5 py-0.5 rounded" title="Customer Code">{customerCode || customerNo}</span>
+              <span className="text-[11px] bg-white/10 border border-white/15 text-white/80 px-1.5 py-0.5 rounded" title="Customer Code">{computeCustomerCode(businessName, name, c.phone) || c.preferences?.customer_code || '—'}</span>
               {isVipType && <span className="badge-vip" title="VIP">★ VIP</span>}
-              {!isVipType && isFrequent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-white/20 text-white/80">Frequent</span>}
             </div>
             <div className="text-[11px] text-slate-400">{c.phone || '—'}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400">{t('customers.card.created')} {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</span>
-          <button onClick={() => setModalOpen(true)} className="px-2 py-1 text-xs rounded bg-white/10 border border-white/15 text-white/85">
-            Open
-          </button>
+          <button onClick={() => setModalOpen(true)} className="px-2 py-1 text-xs rounded bg-white/10 border border-white/15 text-white/85">Open</button>
         </div>
       </div>
 
@@ -450,7 +511,7 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
                     <div className="text-white font-semibold">{name}</div>
                     {isVipType && <span className="badge-vip" title="VIP">★ VIP</span>}
                   </div>
-                  <div className="text-[11px] text-slate-400">{c.phone || '—'} • {(customerCode || customerNo)}</div>
+                  <div className="text-[11px] text-slate-400">{c.phone || '—'} • {(customerCode || computeCustomerCode(businessName, name, c.phone) || '—')}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">

@@ -74,6 +74,14 @@ export default function Settings() {
   const [invoiceNotice, setInvoiceNotice] = useState("")
   const [invoiceError, setInvoiceError] = useState("")
 
+  // Pricing Defaults (persisted in user_settings.pricing_settings)
+  const [pricingSellCurrency, setPricingSellCurrency] = useState('SAR')
+  const [pricingMarkupPct, setPricingMarkupPct] = useState('')
+  const [pricingThobe, setPricingThobe] = useState('')
+  const [pricingSirwal, setPricingSirwal] = useState('')
+  const [pricingFalina, setPricingFalina] = useState('')
+  const [pricingNotice, setPricingNotice] = useState("")
+
   // Notification prefs (from public.user_settings)
   const [emailNotif, setEmailNotif] = useState(false)
   const [pushNotif, setPushNotif] = useState(false)
@@ -294,6 +302,13 @@ export default function Settings() {
           setAutoInvoice(!!inv.auto_generate_numbers)
           setPaymentTerms(inv.payment_terms || "")
           setInvoiceFooter(inv.footer || "Thank you for your business")
+          // Hydrate Pricing Defaults
+          const ps = settings.pricing_settings || {}
+          if (ps.default_sell_currency) setPricingSellCurrency(ps.default_sell_currency)
+          if (Number.isFinite(ps.inventory_markup_pct)) setPricingMarkupPct(ps.inventory_markup_pct)
+          if (ps.thobe_price != null) setPricingThobe(ps.thobe_price)
+          if (ps.sirwal_price != null) setPricingSirwal(ps.sirwal_price)
+          if (ps.falina_price != null) setPricingFalina(ps.falina_price)
           // Hydrate appearance settings if present
           const appr = settings.appearance_settings || null
           if (appr) {

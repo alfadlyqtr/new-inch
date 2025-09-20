@@ -116,8 +116,10 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
   // Free-form notes for special instructions or multiple styles
   const [notes, setNotes] = useState(() => initial.notes || '')
 
-  // Diagram annotations (e.g., dimension lines)
-  const [annotations, setAnnotations] = useState(() => initial.annotations || {})
+  // Diagram annotations per diagram (e.g., dimension lines)
+  const [annotationsMain, setAnnotationsMain] = useState(() => (initial.annotations?.main ?? initial.annotations ?? {}))
+  const [annotationsCollar, setAnnotationsCollar] = useState(() => (initial.annotations?.collar ?? {}))
+  const [annotationsSide, setAnnotationsSide] = useState(() => (initial.annotations?.side ?? {}))
 
   // Inventory-backed options
   const [businessId, setBusinessId] = useState(null)
@@ -254,7 +256,11 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
       points: { main: mainPoints, collar: collarPoints, side: sidePoints },
       unit,
       notes,
-      annotations,
+      annotations: {
+        ...(Object.keys(annotationsMain||{}).length ? { main: annotationsMain } : {}),
+        ...(Object.keys(annotationsCollar||{}).length ? { collar: annotationsCollar } : {}),
+        ...(Object.keys(annotationsSide||{}).length ? { side: annotationsSide } : {}),
+      },
     }
     onDone?.({ measurements })
   }
@@ -349,8 +355,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } }
                 ,{ key: 'arm', label: 'Arm', default: { x: 28, y: 40 } }
               ]}
-              annotations={annotations}
-              onAnnotationsChange={setAnnotations}
+              annotations={annotationsMain}
+              onAnnotationsChange={setAnnotationsMain}
             />
             <LabelsPanel
               title="Labels"
@@ -387,8 +393,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
                 { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
               ]}
-              annotations={annotations}
-              onAnnotationsChange={setAnnotations}
+              annotations={annotationsCollar}
+              onAnnotationsChange={setAnnotationsCollar}
             />
             <LabelsPanel
               title="Labels"
@@ -425,8 +431,8 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
                 { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
                 { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
               ]}
-              annotations={annotations}
-              onAnnotationsChange={setAnnotations}
+              annotations={annotationsSide}
+              onAnnotationsChange={setAnnotationsSide}
             />
             <LabelsPanel
               title="Labels"
@@ -525,12 +531,17 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
               ))}
             </div>
             <div className="text-white/80 font-medium mt-4">Options</div>
-            {Object.entries(options).map(([g, list]) => (
-              <div key={g} className="text-sm text-white/80">
-                <span className="text-white/60 mr-2">{titleCase(g)}:</span>
-                <span>{(list||[]).join(', ') || '—'}</span>
-              </div>
-            ))}
+            {Object.entries(options).map(([g, list]) => {
+              const text = Array.isArray(list)
+                ? (list.length ? list.join(', ') : '—')
+                : (list ? String(list) : '—')
+              return (
+                <div key={g} className="text-sm text-white/80">
+                  <span className="text-white/60 mr-2">{titleCase(g)}:</span>
+                  <span>{text}</span>
+                </div>
+              )
+            })}
             <div className="mt-4">
               <label className="block text-white/80 font-medium mb-1">Notes</label>
               <textarea

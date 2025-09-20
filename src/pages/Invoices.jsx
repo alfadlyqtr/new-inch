@@ -50,7 +50,7 @@ export default function Invoices() {
       if (!ids.business_id) return
       const { data } = await supabase
         .from('invoices')
-        .select('id, order_id, customer_name, issued_at, status')
+        .select('id, order_id, customer_name, issued_at, status, items, totals')
         .eq('business_id', ids.business_id)
         .order('issued_at', { ascending: false })
         .limit(50)
@@ -126,7 +126,7 @@ export default function Invoices() {
       // refresh invoice list
       const { data: latest } = await supabase
         .from('invoices')
-        .select('id, order_id, customer_name, issued_at, status')
+        .select('id, order_id, customer_name, issued_at, status, items, totals')
         .eq('business_id', ids.business_id)
         .order('issued_at', { ascending: false })
         .limit(50)
@@ -180,6 +180,21 @@ export default function Invoices() {
               </div>
               <div className="text-slate-300 mt-1">{inv.customer_name || '—'}</div>
               <div className="text-xs text-slate-400 mt-1">Order: {String(inv.order_id).slice(0,8)} • {inv.status}</div>
+              {/* Match order info */}
+              {inv.items && (
+                <div className="mt-1 text-xs text-white/70 flex items-center justify-between">
+                  <div className="uppercase tracking-wide">{inv.items.garment_category || '—'}</div>
+                  <div>Qty: {inv.items.quantity ?? '—'}</div>
+                </div>
+              )}
+              {inv.totals && (
+                <div className="mt-1 text-xs text-white/80">
+                  Total: {Number(inv.totals.total||0).toFixed(2)} {inv.totals.currency ? '' : ''}
+                </div>
+              )}
+              <div className="mt-2 flex items-center justify-end">
+                <button type="button" onClick={()=> setSelected(inv.order_id)} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">View</button>
+              </div>
             </div>
           ))}
         </div>
