@@ -414,7 +414,7 @@ export default function Orders() {
       if (!measureOpen) return
       if (!form.customer_id) return
       const { data, error } = await supabase
-        .from('customer')
+        .from('customers')
         .select('measurements')
         .eq('id', form.customer_id)
         .maybeSingle()
@@ -460,7 +460,7 @@ export default function Orders() {
           ...(Object.keys(updatedThobe||{}).length ? { thobe: updatedThobe } : {}),
           ...(Object.keys(updatedSirwal||{}).length ? { sirwal_falina: updatedSirwal } : {}),
         }
-        await supabase.from('customer').update({ measurements: combined }).eq('id', form.customer_id)
+        await supabase.from('customers').update({ measurements: combined }).eq('id', form.customer_id)
       } finally { setSavingM(false) }
     }, 600)
   }
@@ -509,7 +509,7 @@ export default function Orders() {
     // called by NewCustomerForm inside the order dialog
     const toInsert = { ...payload, business_id: ids.business_id }
     const { data: ins, error } = await supabase
-      .from('customer')
+      .from('customers')
       .insert(toInsert)
       .select('id,name,phone,preferences')
       .single()
@@ -523,7 +523,7 @@ export default function Orders() {
   async function loadCustomers(){
     try {
       const { data, error } = await supabase
-        .from('customer')
+        .from('customers')
         .select('id,business_id,name,phone,preferences')
         .eq('business_id', ids.business_id)
         .is('preferences->>deleted_at', null)
@@ -606,7 +606,7 @@ export default function Orders() {
           phone: newCustomer.phone?.trim() || null,
         }
         const { data: ins, error: custErr } = await supabase
-          .from('customer')
+          .from('customers')
           .insert(insertPayload)
           .select('id,name,phone')
           .single()
@@ -1190,7 +1190,7 @@ export default function Orders() {
                           }
                           try {
                             setSavingM(true)
-                            await supabase.from('customer').update({ measurements: combined }).eq('id', form.customer_id)
+                            await supabase.from('customers').update({ measurements: combined }).eq('id', form.customer_id)
                             // Notify other open components (e.g., CustomerCard) to refresh
                             try {
                               const detail = { customerId: form.customer_id, garment: 'thobe', measurements: combined, ts: Date.now() }

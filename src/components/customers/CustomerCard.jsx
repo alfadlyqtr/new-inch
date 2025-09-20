@@ -296,19 +296,22 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
       : { ...measurements, ...patch }
     queueSaveMeasurements(next)
   }
-  function saveThobePoints(updater){
+  // Multi-diagram helpers (no cross-customer defaults)
+  const [thobeDiagram, setThobeDiagram] = useState('main') // 'main' | 'collar' | 'side'
+  function saveThobePointsFor(diagram, updater){
     const cur = thobeView.points || {}
-    const main = Array.isArray(cur.main) ? cur.main : []
-    const nextMain = updater(main)
-    saveThobePatch({ points: { ...cur, main: nextMain } })
+    const arr = Array.isArray(cur[diagram]) ? cur[diagram] : []
+    const nextArr = updater(arr)
+    saveThobePatch({ points: { ...cur, [diagram]: nextArr } })
   }
-  function saveThobeFixed(update){
+  function saveThobeFixedFor(diagram, update){
     const cur = thobeView.fixedPositions || {}
-    const main = cur.main || {}
-    saveThobePatch({ fixedPositions: { ...cur, main: { ...main, ...update } } })
+    const grp = cur[diagram] || {}
+    saveThobePatch({ fixedPositions: { ...cur, [diagram]: { ...grp, ...update } } })
   }
-  function saveThobeAnnotations(next){
-    saveThobePatch({ annotations: next })
+  function saveThobeAnnotationsFor(diagram, next){
+    const cur = thobeView.annotations || {}
+    saveThobePatch({ annotations: { ...cur, [diagram]: next } })
   }
 
   const tabs = [
@@ -322,19 +325,43 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
             <button onClick={() => setModalOpen(false)} className="text-xs px-2 py-1 rounded bg-white/10 border border-white/20">Close</button>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/[0.02] surface-pattern p-2">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] text-white/70">Diagram:</span>
+              <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                <button type="button" onClick={()=> setThobeDiagram('main')} className={`px-2 py-1 text-xs ${thobeDiagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
+                <button type="button" onClick={()=> setThobeDiagram('collar')} className={`px-2 py-1 text-xs ${thobeDiagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
+                <button type="button" onClick={()=> setThobeDiagram('side')} className={`px-2 py-1 text-xs ${thobeDiagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+              </div>
+            </div>
             <MeasurementOverlay
+              imageUrl={thobeDiagram==='main' ? "/measurements/thobe/thobe daigram.png" : (thobeDiagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png")}
               values={thobeView}
               onChange={(key, value)=> saveThobePatch({ [key]: value })}
-              fallbackUrls={["/measurements/garment-fallback.png"]}
-              aspectPercent={130}
-              points={thobeView.points?.main || []}
-              onAddPoint={(p)=> saveThobePoints(arr => [...arr, p])}
-              onUpdatePoint={(p)=> saveThobePoints(arr => arr.map(x => x.id===p.id ? p : x))}
-              onRemovePoint={(p)=> saveThobePoints(arr => arr.filter(x => x.id!==p.id))}
-              fixedPositions={thobeView.fixedPositions?.main || {}}
-              onFixedUpdate={(key, pos)=> saveThobeFixed({ [key]: pos })}
-              annotations={thobeView.annotations || {}}
-              onAnnotationsChange={saveThobeAnnotations}
+              fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png"]}
+              aspectPercent={thobeDiagram==='collar' ? 120 : 135}
+              points={thobeView.points?.[thobeDiagram] || []}
+              onAddPoint={(p)=> saveThobePointsFor(thobeDiagram, arr => [...arr, p])}
+              onUpdatePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.map(x => x.id===p.id ? p : x))}
+              onRemovePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.filter(x => x.id!==p.id))}
+              fixedPositions={thobeView.fixedPositions?.[thobeDiagram] || {}}
+              onFixedUpdate={(key, pos)=> saveThobeFixedFor(thobeDiagram, { [key]: pos })}
+              annotations={thobeView.annotations?.[thobeDiagram] || {}}
+              onAnnotationsChange={(next)=> saveThobeAnnotationsFor(thobeDiagram, next)}
+              allowedFixedKeys={thobeDiagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
+              extraFixed={thobeDiagram==='main' ? [
+                { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } },
+                { key: 'arm', label: 'Arm', default: { x: 28, y: 40 } },
+              ] : (thobeDiagram==='collar' ? [
+                { key: 'collar_width',  label: 'Collar Width',  default: { x: 50, y: 30 } },
+                { key: 'collar_height', label: 'Collar Height', default: { x: 70, y: 55 } },
+                { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
+                { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
+              ] : [
+                { key: 'shoulder_slope',     label: 'Shoulder Slope',     default: { x: 50, y: 20 } },
+                { key: 'underarm_depth',     label: 'Underarm Depth',     default: { x: 50, y: 40 } },
+                { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
+                { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
+              ])}
             />
           </div>
         </div>
@@ -568,11 +595,43 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
             <div className="p-3 space-y-2">
               <div className="text-xs text-slate-400">{savingM ? 'Saving…' : 'Autosaves'}</div>
               <div className="rounded-lg border border-white/10 bg-white/[0.02] surface-pattern p-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[11px] text-white/70">Diagram:</span>
+                  <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                    <button type="button" onClick={()=> setThobeDiagram('main')} className={`px-2 py-1 text-xs ${thobeDiagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
+                    <button type="button" onClick={()=> setThobeDiagram('collar')} className={`px-2 py-1 text-xs ${thobeDiagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
+                    <button type="button" onClick={()=> setThobeDiagram('side')} className={`px-2 py-1 text-xs ${thobeDiagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+                  </div>
+                </div>
                 <MeasurementOverlay
-                  values={measurements}
-                  onChange={(key, value)=> queueSaveMeasurements({ ...measurements, [key]: value })}
-                  fallbackUrls={["/measurements/garment-fallback.png"]}
-                  aspectPercent={130}
+                  imageUrl={thobeDiagram==='main' ? "/measurements/thobe/thobe daigram.png" : (thobeDiagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png")}
+                  values={thobeView}
+                  onChange={(key, value)=> saveThobePatch({ [key]: value })}
+                  fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png"]}
+                  aspectPercent={thobeDiagram==='collar' ? 120 : 135}
+                  points={thobeView.points?.[thobeDiagram] || []}
+                  onAddPoint={(p)=> saveThobePointsFor(thobeDiagram, arr => [...arr, p])}
+                  onUpdatePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.map(x => x.id===p.id ? p : x))}
+                  onRemovePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.filter(x => x.id!==p.id))}
+                  fixedPositions={thobeView.fixedPositions?.[thobeDiagram] || {}}
+                  onFixedUpdate={(key, pos)=> saveThobeFixedFor(thobeDiagram, { [key]: pos })}
+                  annotations={thobeView.annotations?.[thobeDiagram] || {}}
+                  onAnnotationsChange={(next)=> saveThobeAnnotationsFor(thobeDiagram, next)}
+                  allowedFixedKeys={thobeDiagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
+                  extraFixed={thobeDiagram==='main' ? [
+                    { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } },
+                    { key: 'arm', label: 'Arm', default: { x: 28, y: 40 } },
+                  ] : (thobeDiagram==='collar' ? [
+                    { key: 'collar_width',  label: 'Collar Width',  default: { x: 50, y: 30 } },
+                    { key: 'collar_height', label: 'Collar Height', default: { x: 70, y: 55 } },
+                    { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
+                    { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
+                  ] : [
+                    { key: 'shoulder_slope',     label: 'Shoulder Slope',     default: { x: 50, y: 20 } },
+                    { key: 'underarm_depth',     label: 'Underarm Depth',     default: { x: 50, y: 40 } },
+                    { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
+                    { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
+                  ])}
                 />
               </div>
             </div>

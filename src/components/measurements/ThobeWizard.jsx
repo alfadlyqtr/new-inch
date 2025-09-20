@@ -74,30 +74,16 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
   const [fixedCollar, setFixedCollar] = useState(() => normalizedInitial.fixedPositions?.collar || {})
   const [fixedSide, setFixedSide] = useState(() => normalizedInitial.fixedPositions?.side || {})
 
-  // Load default layouts from localStorage (used when customer has no saved positions)
-  const [layoutDefaultMain, setLayoutDefaultMain] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('thobe_layout_main')||'{}') } catch { return {} }
-  })
-  const [layoutDefaultCollar, setLayoutDefaultCollar] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('thobe_layout_collar')||'{}') } catch { return {} }
-  })
-  const [layoutDefaultSide, setLayoutDefaultSide] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('thobe_layout_side')||'{}') } catch { return {} }
-  })
-  const [savedMsg, setSavedMsg] = useState('')
+  // No cross-customer defaults. Use only customer's saved positions or the built-in defaults when empty.
 
   function mergedFixed(main){
-    // If there are saved positions for this customer, use them; otherwise fallback to layout defaults
-    if (Object.keys(main||{}).length) return main
-    return layoutDefaultMain
+    return Object.keys(main||{}).length ? main : DEFAULT_POS_MAIN
   }
   function mergedFixedCollarFn(coll){
-    if (Object.keys(coll||{}).length) return coll
-    return layoutDefaultCollar
+    return Object.keys(coll||{}).length ? coll : DEFAULT_POS_COLLAR
   }
   function mergedFixedSideFn(side){
-    if (Object.keys(side||{}).length) return side
-    return layoutDefaultSide
+    return Object.keys(side||{}).length ? side : DEFAULT_POS_SIDE
   }
 
   // Options (checkboxes and single-select season)
@@ -274,57 +260,11 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-xs text-white/80 mr-2">
             <span>Units:</span>
-            <div className="inline-flex rounded-md overflow-hidden border border-white/15">
-              <button type="button" onClick={()=> setUnit('cm')} className={`px-2 py-1 ${unit==='cm' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>cm</button>
-              <button type="button" onClick={()=> setUnit('in')} className={`px-2 py-1 ${unit==='in' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>in</button>
-            </div>
           </div>
           <button
-            onClick={() => {
-              if (s.key==='main') {
-                const map = { ...DEFAULT_POS_MAIN, ...fixedMain }
-                localStorage.setItem('thobe_layout_main', JSON.stringify(map))
-                setLayoutDefaultMain(map)
-                setFixedMain(map)
-              }
-              if (s.key==='collar') {
-                const map = { ...DEFAULT_POS_COLLAR, ...fixedCollar }
-                localStorage.setItem('thobe_layout_collar', JSON.stringify(map))
-                setLayoutDefaultCollar(map)
-                setFixedCollar(map)
-              }
-              if (s.key==='side') {
-                const map = { ...DEFAULT_POS_SIDE, ...fixedSide }
-                localStorage.setItem('thobe_layout_side', JSON.stringify(map))
-                setLayoutDefaultSide(map)
-                setFixedSide(map)
-              }
-              setSavedMsg('Layout saved')
-              setTimeout(() => setSavedMsg(''), 1200)
-            }}
+            onClick={() => fieldsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
             className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white/85"
-            title="Use current positions as default when no customer layout exists"
-          >Save Layout as Default</button>
-          {savedMsg && <span className="text-[11px] text-emerald-300/90">{savedMsg}</span>}
-          <button
-            onClick={() => {
-              if (s.key==='main') {
-                const map = Object.keys(layoutDefaultMain||{}).length ? layoutDefaultMain : DEFAULT_POS_MAIN
-                setFixedMain(map)
-              }
-              if (s.key==='collar') {
-                const map = Object.keys(layoutDefaultCollar||{}).length ? layoutDefaultCollar : DEFAULT_POS_COLLAR
-                setFixedCollar(map)
-              }
-              if (s.key==='side') {
-                const map = Object.keys(layoutDefaultSide||{}).length ? layoutDefaultSide : DEFAULT_POS_SIDE
-                setFixedSide(map)
-              }
-            }}
-            className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white/85"
-            title="Apply saved default positions to this customer"
-          >Apply Default</button>
-          <button onClick={() => fieldsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white/85">Fields</button>
+          >Fields</button>
           {(s.key==='main' || s.key==='collar' || s.key==='side') && (
             <button onClick={()=> setMoveFixed(v => !v)} className={`px-2 py-1 rounded border ${moveFixed ? 'bg-amber-500/20 border-amber-400/40 text-amber-100' : 'bg-white/10 border-white/20 text-white/85'}`}>{moveFixed ? 'Stop Moving Labels' : 'Move Labels'}</button>
           )}

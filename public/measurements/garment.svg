@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="1040" viewBox="0 0 800 1040" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <style>
+      .outline { stroke: #94a3b8; stroke-width: 3; fill: rgba(148,163,184,0.06); }
+      .dash { stroke: #38bdf8; stroke-width: 2; stroke-dasharray: 6 6; }
+      .label { font: 14px Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; fill: #e2e8f0; }
+      .tick { stroke: #38bdf8; stroke-width: 2; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="800" height="1040" fill="url(#bg)"/>
+
+  <!-- Simplified thobe silhouette -->
+  <path class="outline" d="M300 120
+    C300 95 325 70 360 60
+    L440 60
+    C475 70 500 95 500 120
+    L500 200
+    C555 220 605 260 640 320
+    L640 930
+    C610 955 560 970 500 980
+    L300 980
+    C240 970 190 955 160 930
+    L160 320
+    C195 260 245 220 300 200
+    Z"/>
+
+  <!-- Neck -->
+  <line class="dash" x1="400" y1="95" x2="400" y2="150"/>
+  <line class="tick" x1="380" y1="95" x2="420" y2="95"/>
+  <text class="label" x="410" y="110">Neck</text>
+
+  <!-- Shoulders -->
+  <line class="dash" x1="260" y1="210" x2="540" y2="210"/>
+  <line class="tick" x1="260" y1="200" x2="260" y2="220"/>
+  <line class="tick" x1="540" y1="200" x2="540" y2="220"/>
+  <text class="label" x="550" y="206">Shoulders</text>
+
+  <!-- Chest -->
+  <line class="dash" x1="240" y1="320" x2="560" y2="320"/>
+  <line class="tick" x1="240" y1="310" x2="240" y2="330"/>
+  <line class="tick" x1="560" y1="310" x2="560" y2="330"/>
+  <text class="label" x="570" y="316">Chest</text>
+
+  <!-- Waist -->
+  <line class="dash" x1="250" y1="420" x2="550" y2="420"/>
+  <line class="tick" x1="250" y1="410" x2="250" y2="430"/>
+  <line class="tick" x1="550" y1="410" x2="550" y2="430"/>
+  <text class="label" x="560" y="416">Waist</text>
+
+  <!-- Sleeve (left) -->
+  <path class="dash" d="M300 205 C240 240 210 300 200 360"/>
+  <text class="label" x="180" y="360" transform="rotate(-20 180,360)">Sleeve</text>
+
+  <!-- Hips -->
+  <line class="dash" x1="260" y1="520" x2="540" y2="520"/>
+  <line class="tick" x1="260" y1="510" x2="260" y2="530"/>
+  <line class="tick" x1="540" y1="510" x2="540" y2="530"/>
+  <text class="label" x="550" y="516">Hips</text>
+
+  <!-- Length -->
+  <line class="dash" x1="620" y1="180" x2="620" y2="960"/>
+  <line class="tick" x1="610" y1="180" x2="630" y2="180"/>
+  <line class="tick" x1="610" y1="960" x2="630" y2="960"/>
+  <text class="label" x="630" y="570" transform="rotate(90 630,570)">Length</text>
+
+  <!-- Guide note -->
+  <text class="label" x="400" y="1000" text-anchor="middle" fill="#a5b4fc">Placeholder Measurement Diagram • Replace with public/measurements/garment.png</text>
+</svg>
