@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { Tabs } from "../ui/tabs.jsx"
 import MeasurementOverlay from "./MeasurementOverlay.jsx"
 import { supabase } from "../../lib/supabaseClient.js"
+import { useCan } from "../../lib/permissions.jsx"
+import { useLocation, useNavigate } from "react-router-dom"
 import { loadMeasurementsForCustomer } from "../../lib/measurementsStorage.js"
 
 export default function CustomerCard({ c, onEdit, onDeleted }) {
@@ -11,6 +13,7 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   const [measurements, setMeasurements] = useState(c.measurements || {})
   const [notes, setNotes] = useState(c?.preferences?.notes || "")
   const [orders, setOrders] = useState([])
+  const [invoices, setInvoices] = useState([])
   const [savingM, setSavingM] = useState(false)
   const [savingN, setSavingN] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -19,6 +22,11 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   const [savingEdit, setSavingEdit] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
   const [businessName, setBusinessName] = useState("")
+  const navigate = useNavigate()
+  const location = useLocation()
+  const basePath = useMemo(() => (location.pathname.startsWith('/staff') ? '/staff' : '/bo'), [location.pathname])
+  const canViewOrders = useCan('orders','view')
+  const canViewInvoices = useCan('invoices','view')
 
   // Details form state (mirrors NewCustomerForm fields)
   const [details, setDetails] = useState(() => ({
@@ -55,6 +63,26 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
       document.removeEventListener('business-name-updated', handler)
     }
   }, [])
+
+  // Navigation helpers
+  const gotoOrder = (orderId) => {
+    if (!canViewOrders) {
+      alert('You do not have permission to view orders. Please contact your administrator.')
+      return
+    }
+    try { navigate(`${basePath}/orders`, { state: { orderId } }) } catch {}
+  }
+  const gotoInvoice = (invoiceId, orderId) => {
+    if (!canViewInvoices) {
+      alert('You do not have permission to view invoices. Please contact your administrator.')
+      return
+    }
+    try {
+      const qp = new URLSearchParams({ invoiceId: String(invoiceId || '') })
+      if (orderId) qp.set('orderId', String(orderId))
+      navigate(`${basePath}/invoices?${qp.toString()}`, { state: { invoiceId, orderId } })
+    } catch {}
+  }
 
   const computeCustomerCode = (bizName, custName, phone) => {
     const biz = String(bizName||'').replace(/\s+/g,'').toUpperCase()
@@ -161,8 +189,11 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   }, [modalOpen])
 
   const name = c.name || "—"
-  const totalOrders = c.total_orders ?? 0
-  const totalSpent = Number(c.total_spent || 0)
+  // Prefer live values derived from loaded orders over any stale aggregates
+  const liveOrdersCount = useMemo(() => (Array.isArray(orders) ? orders.length : 0), [orders])
+  const liveTotalSpent = useMemo(() => {
+    try { return (orders||[]).reduce((sum, o) => sum + (Number(o.total_amount||0) || 0), 0) } catch { return 0 }
+  }, [orders])
   const last = c.last_order_date ? new Date(c.last_order_date).toLocaleDateString() : "—"
 
   // Derive short IDs for friendly display
@@ -174,8 +205,8 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
   const initial = (name || '').trim()[0]?.toUpperCase() || 'C'
 
   // Heuristic badges
-  const isVIP = totalSpent > 1000
-  const isFrequent = totalOrders >= 5
+  const isVIP = liveTotalSpent > 1000
+  const isFrequent = liveOrdersCount >= 5
 
   // Debounce helpers
   const mTimer = useRef(null)
@@ -203,8 +234,15 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
             const metaBiz = { businessName: bizName, businessId: c.business_id }
             const metaCust = { name: c.name, phone: c.phone, id: c.id }
             const latestThobe = await loadMeasurementsForCustomer(metaBiz, metaCust, 'thobe', { orderId: null })
-            if (!cancelled && latestThobe && Object.keys(latestThobe || {}).length > 0) {
-              setMeasurements(prev => ({ ...prev, thobe: latestThobe }))
+            const latestSirwal = await loadMeasurementsForCustomer(metaBiz, metaCust, 'sirwal', { orderId: null })
+            const latestFanila = await loadMeasurementsForCustomer(metaBiz, metaCust, 'fanila', { orderId: null })
+            if (!cancelled) {
+              setMeasurements(prev => ({
+                ...prev,
+                ...(latestThobe && Object.keys(latestThobe||{}).length>0 ? { thobe: latestThobe } : {}),
+                ...(latestSirwal && Object.keys(latestSirwal||{}).length>0 ? { sirwal: latestSirwal } : {}),
+                ...(latestFanila && Object.keys(latestFanila||{}).length>0 ? { fanila: latestFanila } : {}),
+              }))
             }
           } catch {}
         }
@@ -213,17 +251,71 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
     return () => { cancelled = true }
   }, [c?.id])
 
-  // Load recent orders (mini list)
+  // Load all invoices for this customer (robust: by order IDs and by customer_id)
+  const reloadInvoices = useRef(null)
+  reloadInvoices.current = async () => {
+    const orderIds = (orders || []).map(o => o.id).filter(Boolean)
+    const list = []
+    try {
+      if (orderIds.length > 0) {
+        const { data } = await supabase
+          .from('invoices')
+          .select('id, status, totals, currency, issued_at, created_at, order_id, customer_id, business_id')
+          .in('order_id', orderIds)
+          .eq('business_id', c.business_id)
+          .order('issued_at', { ascending: false })
+        if (Array.isArray(data)) list.push(...data)
+      }
+      {
+        const { data } = await supabase
+          .from('invoices')
+          .select('id, status, totals, currency, issued_at, created_at, order_id, customer_id, business_id')
+          .eq('customer_id', c.id)
+          .eq('business_id', c.business_id)
+          .order('issued_at', { ascending: false })
+        if (Array.isArray(data)) list.push(...data)
+      }
+    } catch {}
+    // Dedupe by id and sort by issued_at/created_at desc
+    const byId = new Map()
+    for (const inv of list) { byId.set(inv.id, inv) }
+    const merged = Array.from(byId.values()).sort((a,b) => {
+      const ta = new Date(a.issued_at || a.created_at || 0).getTime()
+      const tb = new Date(b.issued_at || b.created_at || 0).getTime()
+      return tb - ta
+    })
+    setInvoices(merged)
+  }
+  useEffect(() => { (reloadInvoices.current && reloadInvoices.current()) }, [c?.id, orders])
+
+  // Refresh invoices when Orders page issues/updates one
+  useEffect(() => {
+    function onInv(e){
+      const det = e?.detail
+      if (det?.type === 'invoice-updated' && det.customerId === c.id) {
+        reloadInvoices.current && reloadInvoices.current()
+      }
+    }
+    window.addEventListener('invoice-updated', onInv)
+    document.addEventListener('invoice-updated', onInv)
+    let bc
+    try {
+      bc = new BroadcastChannel('app_events')
+      bc.onmessage = (msg) => { const d = msg?.data; if (d?.type === 'invoice-updated' && d.customerId === c.id) { reloadInvoices.current && reloadInvoices.current() } }
+    } catch {}
+    return () => { window.removeEventListener('invoice-updated', onInv); document.removeEventListener('invoice-updated', onInv); try { bc && bc.close() } catch {} }
+  }, [c.id])
+
+  // Load all orders for this customer
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       if (!c?.id) return
       const { data, error } = await supabase
         .from('orders')
-        .select('id, status, total_amount, created_at')
+        .select('id, status, items, delivery_date, notes, total_amount, currency, created_at')
         .eq('customer_id', c.id)
         .order('created_at', { ascending: false })
-        .limit(5)
       if (!cancelled) setOrders(error ? [] : (data || []))
     })()
     return () => { cancelled = true }
@@ -263,55 +355,125 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
     return 'bg-white/10 border-white/20 text-white/80'
   }
 
-  const OrderMiniList = () => (
+  const OrdersGrid = () => (
     <div className="space-y-2">
       {orders.length === 0 && (
-        <div className="text-xs text-slate-400">No recent orders</div>
+        <div className="text-xs text-slate-400">No orders yet</div>
       )}
-      {orders.map(o => (
-        <div key={o.id} className="flex items-center justify-between rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs">
-          <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 rounded ${statusClass(o.status)} border`}>{o.status || '—'}</span>
-            <span className="text-white/85">#{short(o.id)}</span>
-            <span className="text-slate-400">{new Date(o.created_at).toLocaleDateString()}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-300">{Number(o.total_amount||0).toFixed(2)}</span>
-            <button className="text-[11px] px-2 py-0.5 rounded bg-white/10 border border-white/15">Open</button>
-          </div>
+      {orders.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {orders.map(o => (
+            <div key={o.id} className="rounded-xl bg-white/5 border border-white/10 p-4 text-white/90 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-white/85 font-medium truncate" title={name}>{name}</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={()=> gotoOrder(o.id)}
+                    className={`text-xs px-2 py-1 rounded border ${canViewOrders ? 'border-white/15 bg-white/5 text-white/80 hover:bg-white/10' : 'border-white/15 bg-white/5 text-white/60 cursor-not-allowed'}`}
+                    title="Open in Orders"
+                  >
+                    View
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-white/70">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">{c.phone || '—'}</span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">Code: {computeCustomerCode(businessName, name, c.phone) || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm uppercase tracking-wide text-white/60">{o.items?.garment_category || '—'}</div>
+                <div className="text-sm text-white/60">Qty: {o.items?.quantity ?? '—'}</div>
+              </div>
+              <div className="text-xs text-white/50">Due: {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</div>
+              <div className="text-xs text-white/40" title={o.id || ''}>Order ID: #{short(o.id)}</div>
+              <div className="text-sm line-clamp-2 text-white/80">{o.notes || 'No notes'}</div>
+              {typeof o.total_amount === 'number' && (
+                <div className="text-xs text-white/80">Total: {Number(o.total_amount||0).toFixed(2)}{o.currency ? ` ${o.currency}` : ''}</div>
+              )}
+            </div>
+          ))}
         </div>
-      ))}
-      <div className="flex items-center gap-2 pt-2">
-        <button className="px-2.5 py-1 rounded-md text-xs pill-active glow">New Order</button>
-        <button className="px-2.5 py-1 rounded-md text-xs bg-white/10 border border-white/15 text-white/85">View all</button>
-      </div>
+      )}
     </div>
   )
 
-  // Helpers to view/edit nested thobe structure (fallback to flat legacy)
-  const thobeView = useMemo(() => (measurements?.thobe ? measurements.thobe : measurements || {}), [measurements])
-  function saveThobePatch(patch){
-    const next = measurements?.thobe || measurements?.sirwal_falina
-      ? { ...measurements, thobe: { ...(measurements.thobe||{}), ...patch } }
-      : { ...measurements, ...patch }
-    queueSaveMeasurements(next)
+  const InvoicesGrid = () => (
+    <div className="space-y-2">
+      {invoices.length === 0 && (
+        <div className="text-xs text-slate-400">No invoices yet</div>
+      )}
+      {invoices.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {invoices.map(inv => {
+            const total = (() => {
+              try { return Number(inv?.totals?.total || 0) } catch { return 0 }
+            })()
+            return (
+              <div key={inv.id} className="rounded-xl bg-white/5 border border-white/10 p-4 text-white/90 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-white/85 font-medium truncate" title={`#${short(inv.id)}`}>Invoice #{short(inv.id)}</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={()=> gotoInvoice(inv.id, inv.order_id)}
+                      className={`text-xs px-2 py-1 rounded border ${canViewInvoices ? 'border-white/15 bg-white/5 text-white/80 hover:bg-white/10' : 'border-white/15 bg-white/5 text-white/60 cursor-not-allowed'}`}
+                      title="Open in Invoices"
+                    >
+                      View
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-white/70">
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${String(inv.status||'').toLowerCase().includes('paid') ? 'bg-emerald-600/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10'}`}>{inv.status || '—'}</span>
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">{new Date(inv.issued_at || inv.created_at).toLocaleDateString()}</span>
+                </div>
+                <div className="text-sm text-white/80">Total: {total.toFixed(2)}{inv.currency ? ` ${inv.currency}` : ''}</div>
+                {inv.order_id && (
+                  <div className="text-xs text-white/40" title={inv.order_id}>Order: #{short(inv.order_id)}</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+
+  // Removed nested components with hooks to avoid parser issues
+
+  // Garment selection and helpers (supports thobe, sirwal, fanila)
+  const [garment, setGarment] = useState('thobe') // 'thobe' | 'sirwal' | 'fanila'
+  // View for the selected garment. If legacy flat structure, treat it as thobe.
+  const garmentView = useMemo(() => {
+    // Strict isolation: only read the active garment key; legacy flat fallback only for thobe
+    if (garment === 'thobe') return (measurements?.thobe || measurements || {})
+    return measurements?.[garment] || {}
+  }, [measurements, garment])
+
+  function saveGarmentPatch(patch){
+    // Strict per-garment persistence, no combined mirror.
+    const base = { ...(measurements||{}) }
+    const merged = { ...(measurements?.[garment] || {}), ...patch }
+    base[garment] = merged
+    queueSaveMeasurements(base)
   }
   // Multi-diagram helpers (no cross-customer defaults)
-  const [thobeDiagram, setThobeDiagram] = useState('main') // 'main' | 'collar' | 'side'
-  function saveThobePointsFor(diagram, updater){
-    const cur = thobeView.points || {}
-    const arr = Array.isArray(cur[diagram]) ? cur[diagram] : []
+  const [diagram, setDiagram] = useState('main') // depends on garment
+  function savePointsFor(diagramKey, updater){
+    const cur = garmentView.points || {}
+    const arr = Array.isArray(cur[diagramKey]) ? cur[diagramKey] : []
     const nextArr = updater(arr)
-    saveThobePatch({ points: { ...cur, [diagram]: nextArr } })
+    saveGarmentPatch({ points: { ...cur, [diagramKey]: nextArr } })
   }
-  function saveThobeFixedFor(diagram, update){
-    const cur = thobeView.fixedPositions || {}
-    const grp = cur[diagram] || {}
-    saveThobePatch({ fixedPositions: { ...cur, [diagram]: { ...grp, ...update } } })
+  function saveFixedFor(diagramKey, update){
+    const cur = garmentView.fixedPositions || {}
+    const grp = cur[diagramKey] || {}
+    saveGarmentPatch({ fixedPositions: { ...cur, [diagramKey]: { ...grp, ...update } } })
   }
-  function saveThobeAnnotationsFor(diagram, next){
-    const cur = thobeView.annotations || {}
-    saveThobePatch({ annotations: { ...cur, [diagram]: next } })
+  function saveAnnotationsFor(diagramKey, next){
+    const cur = garmentView.annotations || {}
+    saveGarmentPatch({ annotations: { ...cur, [diagramKey]: next } })
   }
 
   const tabs = [
@@ -322,46 +484,64 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="text-xs text-slate-400">Interactive overlay. {savingM ? 'Saving…' : 'Autosaves'}</div>
-            <button onClick={() => setModalOpen(false)} className="text-xs px-2 py-1 rounded bg-white/10 border border-white/20">Close</button>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/[0.02] surface-pattern p-2">
+            {/* Garment selector */}
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[11px] text-white/70">Diagram:</span>
+              <span className="text-[11px] text-white/70">Garment:</span>
               <div className="inline-flex rounded-md overflow-hidden border border-white/15">
-                <button type="button" onClick={()=> setThobeDiagram('main')} className={`px-2 py-1 text-xs ${thobeDiagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
-                <button type="button" onClick={()=> setThobeDiagram('collar')} className={`px-2 py-1 text-xs ${thobeDiagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
-                <button type="button" onClick={()=> setThobeDiagram('side')} className={`px-2 py-1 text-xs ${thobeDiagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+                <button type="button" onClick={()=> { setGarment('thobe'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='thobe' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Thobe</button>
+                <button type="button" onClick={()=> { setGarment('sirwal'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='sirwal' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Sirwal</button>
+                <button type="button" onClick={()=> { setGarment('fanila'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='fanila' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Fanila</button>
               </div>
             </div>
+            {/* Diagram selector (varies by garment) */}
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] text-white/70">Diagram:</span>
+              {garment==='thobe' ? (
+                <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                  <button type="button" onClick={()=> setDiagram('main')} className={`px-2 py-1 text-xs ${diagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
+                  <button type="button" onClick={()=> setDiagram('collar')} className={`px-2 py-1 text-xs ${diagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
+                  <button type="button" onClick={()=> setDiagram('side')} className={`px-2 py-1 text-xs ${diagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-400">Main</div>
+              )}
+            </div>
             <MeasurementOverlay
-              imageUrl={thobeDiagram==='main' ? "/measurements/thobe/thobe daigram.png" : (thobeDiagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png")}
-              values={thobeView}
-              onChange={(key, value)=> saveThobePatch({ [key]: value })}
-              fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png"]}
-              aspectPercent={thobeDiagram==='collar' ? 120 : 135}
-              points={thobeView.points?.[thobeDiagram] || []}
-              onAddPoint={(p)=> saveThobePointsFor(thobeDiagram, arr => [...arr, p])}
-              onUpdatePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.map(x => x.id===p.id ? p : x))}
-              onRemovePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.filter(x => x.id!==p.id))}
-              fixedPositions={thobeView.fixedPositions?.[thobeDiagram] || {}}
-              onFixedUpdate={(key, pos)=> saveThobeFixedFor(thobeDiagram, { [key]: pos })}
-              annotations={thobeView.annotations?.[thobeDiagram] || {}}
-              onAnnotationsChange={(next)=> saveThobeAnnotationsFor(thobeDiagram, next)}
-              allowedFixedKeys={thobeDiagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
-              extraFixed={thobeDiagram==='main' ? [
-                { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } },
-                { key: 'arm', label: 'Arm', default: { x: 28, y: 40 } },
-              ] : (thobeDiagram==='collar' ? [
-                { key: 'collar_width',  label: 'Collar Width',  default: { x: 50, y: 30 } },
-                { key: 'collar_height', label: 'Collar Height', default: { x: 70, y: 55 } },
-                { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
-                { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
-              ] : [
-                { key: 'shoulder_slope',     label: 'Shoulder Slope',     default: { x: 50, y: 20 } },
-                { key: 'underarm_depth',     label: 'Underarm Depth',     default: { x: 50, y: 40 } },
-                { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
-                { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
-              ])}
+              imageUrl={garment==='thobe'
+                ? (diagram==='main' ? "/measurements/thobe/thobe daigram.png" : (diagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png"))
+                : (garment==='sirwal' ? "/measurements/Sirwal-Falina-Measurements/sirwal.png" : "/measurements/Sirwal-Falina-Measurements/falina.png")}
+              values={garmentView}
+              onChange={(key, value)=> saveGarmentPatch({ [key]: value })}
+              fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png", "/logo.jpg"]}
+              aspectPercent={garment==='thobe' && diagram==='collar' ? 120 : 135}
+              points={garmentView.points?.[diagram] || []}
+              onAddPoint={(p)=> savePointsFor(diagram, arr => [...arr, p])}
+              onUpdatePoint={(p)=> savePointsFor(diagram, arr => arr.map(x => x.id===p.id ? p : x))}
+              onRemovePoint={(p)=> savePointsFor(diagram, arr => arr.filter(x => x.id!==p.id))}
+              fixedPositions={garmentView.fixedPositions?.[diagram] || {}}
+              onFixedUpdate={(key, pos)=> saveFixedFor(diagram, { [key]: pos })}
+              annotations={garmentView.annotations?.[diagram] || {}}
+              onAnnotationsChange={(next)=> saveAnnotationsFor(diagram, next)}
+              allowedFixedKeys={garment==='thobe' && diagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
+              extraFixed={garment==='thobe' ? (
+                diagram==='main' ? [
+                  { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } },
+                  { key: 'arm', label: 'Arm', default: { x: 28, y: 40 } },
+                ] : (
+                  diagram==='collar' ? [
+                    { key: 'collar_width',  label: 'Collar Width',  default: { x: 50, y: 30 } },
+                    { key: 'collar_height', label: 'Collar Height', default: { x: 70, y: 55 } },
+                    { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },
+                    { key: 'neck',          label: 'Neck',          default: { x: 52, y: 45 } },
+                  ] : [
+                    { key: 'shoulder_slope',     label: 'Shoulder Slope',     default: { x: 50, y: 20 } },
+                    { key: 'underarm_depth',     label: 'Underarm Depth',     default: { x: 50, y: 40 } },
+                    { key: 'side_pocket_length', label: 'Side Pocket Length', default: { x: 50, y: 80 } },
+                    { key: 'side_pocket_opening',label: 'Side Pocket Opening',default: { x: 50, y: 70 } },
+                  ])
+              ) : []}
             />
           </div>
         </div>
@@ -373,7 +553,18 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
       content: (
         <div className="text-sm text-slate-200 space-y-3">
           <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-            <OrderMiniList />
+            <OrdersGrid />
+          </div>
+        </div>
+      )
+    },
+    {
+      label: "Invoices",
+      value: "invoices",
+      content: (
+        <div className="text-sm text-slate-200 space-y-3">
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <InvoicesGrid />
           </div>
         </div>
       )
@@ -521,15 +712,18 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
 
       {/* Stats row */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="rounded-md border border-white/10 bg-white/[0.04] p-2 text-xs text-white/85">{t('customers.card.orders')} {totalOrders}</div>
-        <div className="rounded-md border border-white/10 bg-white/[0.04] p-2 text-xs text-white/85">{t('customers.card.spent')} {totalSpent.toFixed(2)}</div>
+        <div className={`rounded-md p-2 text-xs border ${liveOrdersCount>0 ? 'bg-emerald-600/15 border-emerald-400/30 text-emerald-100' : 'bg-white/[0.04] border-white/10 text-white/85'}`}>
+          {t('customers.card.orders')} {liveOrdersCount}
+        </div>
+        <div className={`rounded-md p-2 text-xs border ${liveTotalSpent>0 ? 'bg-sky-600/15 border-sky-400/30 text-sky-100' : 'bg-white/[0.04] border-white/10 text-white/85'}`}>
+          {t('customers.card.spent')} {liveTotalSpent.toFixed(2)}
+        </div>
       </div>
 
       {/* Modal with details */}
       {modalOpen && createPortal(
         <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-7xl h-[90vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl overflow-hidden" onClick={(e)=> e.stopPropagation()}>
-            <button aria-label="Close" onClick={() => setModalOpen(false)} className="absolute top-3 right-3 h-9 w-9 rounded-full bg-white/10 border border-white/20 text-white/80 hover:bg-white/15">✕</button>
             <div className="flex items-center justify-between p-5 border-b border-white/10 sticky top-0 bg-slate-950/95 z-10">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center text-white/90 font-semibold">{initial}</div>
@@ -572,6 +766,7 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
                     }) }} className="px-3 py-1.5 text-xs rounded bg-white/10 border border-white/20 text-white/85">Cancel</button>
                   </div>
                 )}
+                <button onClick={() => setModalOpen(false)} className="px-3 py-1.5 text-xs rounded bg-white/10 border border-white/20 text-white/85 hover:bg-white/15">Close</button>
               </div>
             </div>
             <div className="p-5 overflow-y-auto h-[calc(90vh-64px)]">
@@ -595,33 +790,49 @@ export default function CustomerCard({ c, onEdit, onDeleted }) {
             <div className="p-3 space-y-2">
               <div className="text-xs text-slate-400">{savingM ? 'Saving…' : 'Autosaves'}</div>
               <div className="rounded-lg border border-white/10 bg-white/[0.02] surface-pattern p-2">
+                {/* Garment selector */}
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[11px] text-white/70">Diagram:</span>
+                  <span className="text-[11px] text-white/70">Garment:</span>
                   <div className="inline-flex rounded-md overflow-hidden border border-white/15">
-                    <button type="button" onClick={()=> setThobeDiagram('main')} className={`px-2 py-1 text-xs ${thobeDiagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
-                    <button type="button" onClick={()=> setThobeDiagram('collar')} className={`px-2 py-1 text-xs ${thobeDiagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
-                    <button type="button" onClick={()=> setThobeDiagram('side')} className={`px-2 py-1 text-xs ${thobeDiagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+                    <button type="button" onClick={()=> { setGarment('thobe'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='thobe' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Thobe</button>
+                    <button type="button" onClick={()=> { setGarment('sirwal'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='sirwal' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Sirwal</button>
+                    <button type="button" onClick={()=> { setGarment('fanila'); setDiagram('main') }} className={`px-2 py-1 text-xs ${garment==='fanila' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Fanila</button>
                   </div>
                 </div>
+                {/* Diagram selector (varies by garment) */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[11px] text-white/70">Diagram:</span>
+                  {garment==='thobe' ? (
+                    <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                      <button type="button" onClick={()=> setDiagram('main')} className={`px-2 py-1 text-xs ${diagram==='main' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Main</button>
+                      <button type="button" onClick={()=> setDiagram('collar')} className={`px-2 py-1 text-xs ${diagram==='collar' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Collar</button>
+                      <button type="button" onClick={()=> setDiagram('side')} className={`px-2 py-1 text-xs ${diagram==='side' ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>Side</button>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-400">Main</div>
+                  )}
+                </div>
                 <MeasurementOverlay
-                  imageUrl={thobeDiagram==='main' ? "/measurements/thobe/thobe daigram.png" : (thobeDiagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png")}
-                  values={thobeView}
-                  onChange={(key, value)=> saveThobePatch({ [key]: value })}
-                  fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png"]}
-                  aspectPercent={thobeDiagram==='collar' ? 120 : 135}
-                  points={thobeView.points?.[thobeDiagram] || []}
-                  onAddPoint={(p)=> saveThobePointsFor(thobeDiagram, arr => [...arr, p])}
-                  onUpdatePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.map(x => x.id===p.id ? p : x))}
-                  onRemovePoint={(p)=> saveThobePointsFor(thobeDiagram, arr => arr.filter(x => x.id!==p.id))}
-                  fixedPositions={thobeView.fixedPositions?.[thobeDiagram] || {}}
-                  onFixedUpdate={(key, pos)=> saveThobeFixedFor(thobeDiagram, { [key]: pos })}
-                  annotations={thobeView.annotations?.[thobeDiagram] || {}}
-                  onAnnotationsChange={(next)=> saveThobeAnnotationsFor(thobeDiagram, next)}
-                  allowedFixedKeys={thobeDiagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
-                  extraFixed={thobeDiagram==='main' ? [
+                  imageUrl={garment==='thobe'
+                    ? (diagram==='main' ? "/measurements/thobe/thobe daigram.png" : (diagram==='collar' ? "/measurements/thobe/thobe coller.png" : "/measurements/thobe/thobe side daigram.png"))
+                    : (garment==='sirwal' ? "/measurements/Sirwal-Falina-Measurements/sirwal.png" : "/measurements/Sirwal-Falina-Measurements/falina.png")}
+                  values={garmentView}
+                  onChange={(key, value)=> saveGarmentPatch({ [key]: value })}
+                  fallbackUrls={["/measurements/garment.svg", "/measurements/garment-fallback.png", "/logo.jpg"]}
+                  aspectPercent={garment==='thobe' && diagram==='collar' ? 120 : 135}
+                  points={garmentView.points?.[diagram] || []}
+                  onAddPoint={(p)=> savePointsFor(diagram, arr => [...arr, p])}
+                  onUpdatePoint={(p)=> savePointsFor(diagram, arr => arr.map(x => x.id===p.id ? p : x))}
+                  onRemovePoint={(p)=> savePointsFor(diagram, arr => arr.filter(x => x.id!==p.id))}
+                  fixedPositions={garmentView.fixedPositions?.[diagram] || {}}
+                  onFixedUpdate={(key, pos)=> saveFixedFor(diagram, { [key]: pos })}
+                  annotations={garmentView.annotations?.[diagram] || {}}
+                  onAnnotationsChange={(next)=> saveAnnotationsFor(diagram, next)}
+                  allowedFixedKeys={garment==='thobe' && diagram==='main' ? ["neck","shoulders","chest","waist","sleeve_length","arm","length","chest_l"] : []}
+                  extraFixed={garment==='thobe' && diagram==='main' ? [
                     { key: 'chest_l', label: 'Chest L', default: { x: 52, y: 48 } },
                     { key: 'arm', label: 'Arm', default: { x: 28, y: 40 } },
-                  ] : (thobeDiagram==='collar' ? [
+                  ] : (garment==='thobe' && diagram==='collar' ? [
                     { key: 'collar_width',  label: 'Collar Width',  default: { x: 50, y: 30 } },
                     { key: 'collar_height', label: 'Collar Height', default: { x: 70, y: 55 } },
                     { key: 'collar_curve',  label: 'Collar Curve',  default: { x: 35, y: 60 } },

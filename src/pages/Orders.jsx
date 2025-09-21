@@ -6,17 +6,23 @@ import MeasurementOverlay from "../components/customers/MeasurementOverlay.jsx"
 import ThobeWizard from "../components/measurements/ThobeWizard.jsx"
 import SirwalFalinaWizard from "../components/measurements/SirwalFalinaWizard.jsx"
 import { saveMeasurementsForCustomer, loadMeasurementsForCustomer, copyLatestToOrder, buildMeasurementKey } from "../lib/measurementsStorage.js"
+import { useLocation } from "react-router-dom"
 import { useTranslation } from 'react-i18next'
+import { computeLinePrice, computeInvoiceTotals, normalizePriceBook } from "../lib/pricingEngine.js"
 
 export default function Orders() {
   const { t } = useTranslation()
   const canView = useCan('orders','view')
   const canCreate = useCan('orders','create')
+  const canInvCreate = useCan('invoices','create')
+  const canInvUpdate = useCan('invoices','update')
 
-  const [ids, setIds] = useState({ business_id: null, user_id: null })
+  const [ids, setIds] = useState({ business_id: null, user_id: null, users_app_id: null })
   const [orders, setOrders] = useState([])
+  const [invoicesByOrder, setInvoicesByOrder] = useState({}) // { [order_id]: { id, status, created_at, updates, items?, totals? } }
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
+  const [draftOrderId, setDraftOrderId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [newCustOpen, setNewCustOpen] = useState(false)
   const [measureOpen, setMeasureOpen] = useState(false)
@@ -39,6 +45,63 @@ export default function Orders() {
   const [viewBizName, setViewBizName] = useState("")
   const [businessName, setBusinessName] = useState("")
   const [issuingId, setIssuingId] = useState(null)
+  // Pricing engine integration
+  const [priceBook, setPriceBook] = useState(null)
+  const [inventoryItems, setInventoryItems] = useState([])
+  const [invoiceCfg, setInvoiceCfg] = useState({ currency: 'SAR', vat_percent: 0, rounding: 'none' })
+  // Deep-link support: focus a specific order card via ?orderId=...
+  const location = useLocation()
+  const [focusOrderId, setFocusOrderId] = useState(null)
+  // Edit modal measurement editor (isolated from create flow)
+  const [editMeasureOpen, setEditMeasureOpen] = useState(false)
+  const [editMeasureType, setEditMeasureType] = useState('thobe')
+  const [editMeasureValues, setEditMeasureValues] = useState({})
+
+  // Helper to render short order/customer IDs
+  const short = (v) => (v ? String(v).replace(/-/g, '').slice(-6).toUpperCase() : '—')
+
+  // Stable stringify for shallow object comparison (order-insensitive)
+  function stableStringify(obj){
+    try {
+      return JSON.stringify(obj, Object.keys(obj||{}).sort())
+    } catch { return JSON.stringify(obj||{}) }
+  }
+
+  // Load active price book, inventory items, and invoice settings
+  useEffect(() => {
+    ;(async () => {
+      if (!ids.business_id) return
+      try {
+        const { data: pb } = await supabase
+          .from('pricebooks')
+          .select('id,status,content,effective_from')
+          .eq('business_id', ids.business_id)
+          .eq('status','active')
+          .order('effective_from', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (pb) setPriceBook(normalizePriceBook(pb))
+      } catch {}
+      try {
+        const { data: it } = await supabase
+          .from('inventory_items')
+          .select('id, sku, name, category, sell_price, sell_currency, price, unit_price, retail_price, default_price, sell_unit_price')
+          .eq('business_id', ids.business_id)
+        setInventoryItems(it || [])
+      } catch {}
+      try {
+        if (ids.users_app_id) {
+          const { data: us } = await supabase
+            .from('user_settings')
+            .select('invoice_settings')
+            .eq('user_id', ids.users_app_id)
+            .maybeSingle()
+          const inv = us?.invoice_settings || {}
+          setInvoiceCfg({ currency: inv.currency || 'SAR', vat_percent: Number(inv.vat_percent || inv.tax_rate || 0) || 0, rounding: inv.rounding || 'none' })
+        }
+      } catch {}
+    })()
+  }, [ids.business_id, ids.users_app_id])
 
   const listBizName = React.useMemo(() => {
     let bn = (businessName && String(businessName).trim()) ? businessName : ""
@@ -48,8 +111,94 @@ export default function Orders() {
     return bn
   }, [businessName])
 
-  // Compute simple pricing using defaults from user_settings.pricing_settings
+  // Parse orderId from navigation state or query string on mount/navigation
+  useEffect(() => {
+    try {
+      const st = location.state && typeof location.state === 'object' ? location.state : null
+      const stateId = st?.orderId || null
+      const params = new URLSearchParams(location.search || '')
+      const q = params.get('orderId')
+      setFocusOrderId(stateId || q || null)
+    } catch {}
+  }, [location.search, location.state])
+
+  // After orders render, if we have a focusOrderId, scroll it into view once
+  // Depend on base sources (orders + search) to avoid referencing filteredOrders before it's declared
+  useEffect(() => {
+    if (!focusOrderId) return
+    const el = document.getElementById(`order-card-${focusOrderId}`)
+    if (el) {
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {}
+    }
+  }, [focusOrderId, orders, search])
+
+  // Ensure we know invoice existence for displayed orders. If some orders are
+  // missing in invoicesByOrder, fetch just those to keep labels accurate.
+  async function topOffInvoicesMap(maybeOrders){
+    const list = (maybeOrders || orders || []).map(o => o.id).filter(Boolean)
+    const missing = list.filter(id => !invoicesByOrder[id])
+    if (!ids.business_id || missing.length === 0) return
+    try {
+      const { data: invs } = await supabase
+        .from('invoices')
+        .select('id, order_id, status, issued_at')
+        .in('order_id', missing)
+      if (invs && invs.length) {
+        setInvoicesByOrder(prev => {
+          const map = { ...prev }
+          invs.forEach(inv => { if (inv?.order_id) map[inv.order_id] = { id: inv.id, status: inv.status, created_at: inv.issued_at, updates: prev[inv.order_id]?.updates || 0 } })
+          return map
+        })
+      }
+    } catch {}
+  }
+
+  // Keep invoice map topped off when orders change
+  useEffect(() => { topOffInvoicesMap(orders) }, [orders, ids.business_id])
+
+  // Allow explicitly ensuring invoice state for one order (used after edits)
+  async function ensureInvoiceState(orderId){
+    if (!orderId || invoicesByOrder[orderId]) return
+    try {
+      const { data: inv } = await supabase
+        .from('invoices')
+        .select('id, order_id, status, issued_at')
+        .eq('order_id', orderId)
+        .maybeSingle()
+      if (inv?.order_id) setInvoicesByOrder(prev => ({ ...prev, [inv.order_id]: { id: inv.id, status: inv.status, created_at: inv.issued_at, updates: prev[inv.order_id]?.updates || 0 } }))
+    } catch {}
+  }
+
+  // Compute pricing using active Price Book with fabric auto-resolve; fallback to simple defaults
   const computeTotals = (pricing, invoiceSettings, order) => {
+    try {
+      if (priceBook) {
+        const gKey = String(order?.items?.garment_category || 'thobe').toLowerCase()
+        const qty = Number(order?.items?.quantity || 1)
+        // Try to resolve shop fabric from order options or explicit fabric_sku_id
+        const opts = order?.items?.options || {}
+        let fabricItem = null
+        if (order?.items?.fabric_sku_id) {
+          fabricItem = inventoryItems.find(i => i.id === order.items.fabric_sku_id) || null
+        }
+        if (!fabricItem && inventoryItems?.length) {
+          const keys = ['fabric','fabric_type','fabric_name','material','cloth']
+          let name = null
+          for (const k of keys) {
+            const v = opts[k]
+            if (Array.isArray(v) && v.length) { name = v[0]; break }
+            if (v != null) { name = v; break }
+          }
+          if (name) fabricItem = inventoryItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
+        }
+        const fabricSource = fabricItem ? 'shop' : 'walkin'
+        const walkUnit = Number(priceBook?.fabrics_walkin?.default_unit_price || 0)
+        const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: null, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: opts, inventoryItems, priceBook, settings: invoiceCfg })
+        const totals = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
+        return { lineItems: [], subtotal: totals.subtotal, tax: totals.tax, total: totals.total, taxRate: invoiceCfg.vat_percent }
+      }
+    } catch {}
+    // Fallback to simple defaults
     const q = order?.items?.quantities || {}
     const garments = Array.isArray(pricing?.garments) ? pricing.garments : []
     const findPrice = (name, fallback) => {
@@ -59,9 +208,9 @@ export default function Orders() {
     const pThobe = findPrice('thobe', pricing?.thobe_price)
     const pSirwal = findPrice('sirwal', pricing?.sirwal_price)
     const pFalina = findPrice('falina', pricing?.falina_price)
-    const qtyThobe = Number(q.thobe||0) + Number(q.thobe_extras||0)
+    const qtyThobe = Number(order?.items?.quantity || 0) || (Number(q.thobe||0) + Number(q.thobe_extras||0))
     const qtySirwal = Number(q.sirwal_falina||0)
-    const qtyFalina = 0 // if you split sirwal/falina quantities, wire here
+    const qtyFalina = 0
     const lineItems = []
     if (qtyThobe > 0) lineItems.push({ name: 'Thobe', qty: qtyThobe, unit_price: pThobe, amount: qtyThobe * pThobe })
     if (qtySirwal > 0) lineItems.push({ name: 'Sirwal', qty: qtySirwal, unit_price: pSirwal, amount: qtySirwal * pSirwal })
@@ -77,19 +226,15 @@ export default function Orders() {
     if (!o?.id || !ids.business_id) return
     try {
       setIssuingId(o.id)
-      // Load user settings
-      const { data: sess } = await supabase.auth.getSession()
-      const user = sess?.session?.user
+      // Load pricing defaults from user_settings (by users_app_id)
       let pricing = {}
-      let inv = {}
-      if (user) {
+      if (ids.users_app_id) {
         const { data: us } = await supabase
           .from('user_settings')
-          .select('pricing_settings, invoice_settings')
-          .eq('user_id', user.id)
+          .select('pricing_settings')
+          .eq('user_id', ids.users_app_id)
           .maybeSingle()
         pricing = us?.pricing_settings || {}
-        inv = us?.invoice_settings || {}
       }
 
       // Load customer basic data
@@ -108,10 +253,39 @@ export default function Orders() {
       const thKey = buildMeasurementKey(bizMeta, metaCust, 'thobe', { orderId: o.id })
       const sfKey = buildMeasurementKey(bizMeta, metaCust, 'sirwal_falina', { orderId: o.id })
 
-      // Compute totals
-      const totals = computeTotals(pricing, inv, o)
+      // Compute totals using pricing engine with snapshots and fabric auto-resolve
+      let totals
+      try {
+        const gKey = String(o?.items?.garment_category || 'thobe').toLowerCase()
+        const qty = Number(o?.items?.quantity || 1)
+        const mVals = gKey === 'sirwal' || gKey === 'falina' ? (sfSnap || thSnap) : (thSnap || sfSnap)
+        const optionsSel = mVals?.options || o?.items?.options || null
+        let fabricItem = null
+        if (o?.items?.fabric_sku_id) fabricItem = inventoryItems.find(i => i.id === o.items.fabric_sku_id) || null
+        if (!fabricItem && optionsSel && inventoryItems?.length) {
+          const keys = ['fabric','fabric_type','fabric_name','material','cloth']
+          let name = null
+          for (const k of keys) {
+            const v = optionsSel[k]
+            if (Array.isArray(v) && v.length) { name = v[0]; break }
+            if (v != null) { name = v; break }
+          }
+          if (name) fabricItem = inventoryItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
+        }
+        const fabricSource = fabricItem ? 'shop' : 'walkin'
+        const walkUnit = Number(priceBook?.fabrics_walkin?.default_unit_price || 0)
+        const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: mVals, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: optionsSel, inventoryItems, priceBook, settings: invoiceCfg })
+        const t = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
+        totals = { lineItems: [], subtotal: t.subtotal, tax: t.tax, total: t.total, taxRate: Number(invoiceCfg.vat_percent||0) }
+        // Persist fabric_sku_id if we resolved one
+        if (fabricItem) {
+          o.items = { ...(o.items||{}), fabric_sku_id: fabricItem.id }
+        }
+      } catch {
+        totals = computeTotals(pricing, invoiceCfg, o)
+      }
 
-      // Insert invoice
+      // Build invoice payload
       const payload = {
         business_id: ids.business_id,
         order_id: o.id,
@@ -124,7 +298,7 @@ export default function Orders() {
           sirwal_falina: sfSnap ? { key: sfKey, data: sfSnap } : null,
         },
         totals: {
-          currency: inv?.currency || 'SAR (ر.س) - Saudi Riyal',
+          currency: invoiceCfg?.currency || 'SAR',
           tax_rate: totals.taxRate,
           subtotal: Number(totals.subtotal.toFixed(2)),
           tax: Number(totals.tax.toFixed(2)),
@@ -133,8 +307,54 @@ export default function Orders() {
         },
         notes: null,
       }
-      const { error: invErr } = await supabase.from('invoices').insert(payload)
-      if (invErr) throw invErr
+      // If invoice already exists for this order, update it; otherwise create new
+      const { data: existingInv } = await supabase
+        .from('invoices')
+        .select('id, items, totals, issued_at, status')
+        .eq('order_id', o.id)
+        .maybeSingle()
+      if (existingInv?.id) {
+        // Skip update if nothing changed since last invoice
+        const sameItems = stableStringify(existingInv.items||{}) === stableStringify(payload.items||{})
+        const sameTotals = stableStringify(existingInv.totals||{}) === stableStringify(payload.totals||{})
+        if (sameItems && sameTotals) {
+          alert('No order changes detected since last invoice. Nothing to update.')
+          let finalInvoiceId = null
+        }
+        const { error: upErr } = await supabase.from('invoices').update(payload).eq('id', existingInv.id)
+        if (upErr) throw upErr
+        setInvoicesByOrder(prev => ({
+          ...prev,
+          [o.id]: {
+            id: existingInv.id,
+            status: payload.status,
+            created_at: prev[o.id]?.created_at || new Date().toISOString(),
+            updates: (prev[o.id]?.updates || 0) + 1,
+            items: payload.items,
+            totals: payload.totals,
+          }
+        }))
+        let finalInvoiceId = existingInv.id
+        // Emit an 'invoice-updated' event after creating/updating an invoice so other components (like CustomerCard) can reload invoices for that customer.
+        try {
+          const detail = { type: 'invoice-updated', customerId: cust.id, orderId: o.id, invoiceId: finalInvoiceId }
+          window.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+          document.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+          try { const bc = new BroadcastChannel('app_events'); bc.postMessage(detail); bc.close() } catch {}
+        } catch {}
+      } else {
+        const { data: insInv, error: invErr } = await supabase.from('invoices').insert(payload).select('id,issued_at,status').single()
+        if (invErr) throw invErr
+        setInvoicesByOrder(prev => ({ ...prev, [o.id]: { id: insInv.id, status: insInv.status, created_at: insInv.issued_at, updates: 0, items: payload.items, totals: payload.totals } }))
+        let finalInvoiceId = insInv.id
+        // Emit an 'invoice-updated' event after creating/updating an invoice so other components (like CustomerCard) can reload invoices for that customer.
+        try {
+          const detail = { type: 'invoice-updated', customerId: cust.id, orderId: o.id, invoiceId: finalInvoiceId }
+          window.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+          document.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+          try { const bc = new BroadcastChannel('app_events'); bc.postMessage(detail); bc.close() } catch {}
+        } catch {}
+      }
 
       // Update order pricing snapshot fields
       const firstThUnit = totals.lineItems.find(li => li.name === 'Thobe')?.unit_price || null
@@ -151,6 +371,14 @@ export default function Orders() {
       await supabase.from('orders').update(ordUpdate).eq('id', o.id)
 
       alert('Invoice issued')
+
+      // Broadcast invoice update so CustomerCard and other views can refresh
+      try {
+        const detail = { type: 'invoice-updated', customerId: cust.id, orderId: o.id, invoiceId: finalInvoiceId }
+        window.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+        document.dispatchEvent(new CustomEvent('invoice-updated', { detail }))
+        try { const bc = new BroadcastChannel('app_events'); bc.postMessage(detail); bc.close() } catch {}
+      } catch {}
     } catch (e) {
       alert(e?.message || String(e))
     } finally {
@@ -407,7 +635,7 @@ export default function Orders() {
 
   // No auto-open; user clicks measurement buttons to open overlay
 
-  // Load customer measurements when opening overlay; hydrate per garment if possible
+  // Load customer measurements when opening overlay; hydrate ONLY the active garment (no cross-diagram/garment preload)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -420,11 +648,13 @@ export default function Orders() {
         .maybeSingle()
       if (!cancelled && !error && data?.measurements) {
         const m = data.measurements || {}
-        const th = m.thobe || (measureType === 'thobe' ? m : {})
-        const sf = m.sirwal_falina || (measureType === 'sirwal_falina' ? m : {})
-        setThobeM(th); setThobeVer(v => v + 1)
-        setSirwalM(sf); setSirwalVer(v => v + 1)
-        setMeasureValues(measureType === 'thobe' ? th : sf)
+        if (measureType === 'thobe') {
+          const th = m.thobe || (m.unit || m.points || m.fixedPositions ? m : {})
+          setThobeM(th); setThobeVer(v => v + 1); setMeasureValues(th)
+        } else {
+          const sf = m.sirwal_falina || (m.unit || m.points || m.fixedPositions ? m : {})
+          setSirwalM(sf); setSirwalVer(v => v + 1); setMeasureValues(sf)
+        }
       }
       // Try loading persisted JSON from Storage for quick restore
       try {
@@ -499,9 +729,23 @@ export default function Orders() {
         .limit(200)
       if (error) throw error
       setOrders(data || [])
+      // Load associated invoices in one shot, then index by order_id
+      const idsList = (data||[]).map(o => o.id)
+      if (idsList.length) {
+        const { data: invs } = await supabase
+          .from('invoices')
+          .select('id, order_id, status, issued_at')
+          .in('order_id', idsList)
+        const map = {}
+        ;(invs||[]).forEach(inv => { if (inv?.order_id) map[inv.order_id] = { id: inv.id, status: inv.status, created_at: inv.issued_at } })
+        setInvoicesByOrder(map)
+      } else {
+        setInvoicesByOrder({})
+      }
     } catch (e) {
       console.error('load orders failed', e)
       setOrders([])
+      setInvoicesByOrder({})
     } finally { setLoading(false) }
   }
 
@@ -516,6 +760,12 @@ export default function Orders() {
     if (error) throw error
     await loadCustomers()
     setForm(f => ({ ...f, customer_id: ins.id }))
+    // Link draft order to this new customer if a draft exists
+    try {
+      if (draftOrderId) {
+        await supabase.from('orders').update({ customer_id: ins.id, customer_name: ins.name }).eq('id', draftOrderId)
+      }
+    } catch {}
     setUseNewCustomer(false)
     setNewCustOpen(false)
   }
@@ -546,15 +796,60 @@ export default function Orders() {
     ))
   }, [orders, search])
 
-  function openCreate(){
+  async function openCreate(){
     setForm({ customer_id: "", garment_category: "", quantity_thobe: 0, quantity_sirwal: 0, due_date: "", notes: "" })
     setUseNewCustomer(false)
     setNewCustomer({ name: "", phone: "" })
-    setOpen(true)
+    // Clear any stale in-memory measurement state for a fresh order (no cross orders)
+    setThobeM({}); setSirwalM({}); setMeasureValues({}); setThobeVer(v=>v+1); setSirwalVer(v=>v+1)
     setExtraThobes([])
     setExtraMode(false)
     setFormError("")
+    // Create a draft order immediately, linked to current business
+    let resolvedBizId = ids.business_id
+    if (!resolvedBizId) {
+      try {
+        const { data: sess } = await supabase.auth.getSession()
+        const user = sess?.session?.user
+        if (user) {
+          const { data: ua } = await supabase
+            .from('users_app')
+            .select('business_id')
+            .eq('auth_user_id', user.id)
+            .maybeSingle()
+          if (ua?.business_id) { resolvedBizId = ua.business_id; setIds({ business_id: ua.business_id, user_id: user.id }) }
+        }
+      } catch {}
+    }
+    if (!resolvedBizId) { setFormError('Business is not initialized yet. Please try again.'); return }
+    try {
+      const payload = { business_id: resolvedBizId, customer_id: null, customer_name: null, status: 'draft', items: {}, notes: null }
+      const { data: ins, error } = await supabase
+        .from('orders')
+        .insert(payload)
+        .select('id')
+        .single()
+      if (error) throw error
+      setDraftOrderId(ins.id)
+      setOpen(true)
+    } catch (e) {
+      setFormError(`Could not start a new order. ${e?.message || ''}`)
+    }
   }
+
+  // When user selects an existing customer, link it to the draft order immediately (no cross orders)
+  useEffect(() => {
+    ;(async () => {
+      if (!draftOrderId) return
+      if (!form.customer_id) return
+      try {
+        const cust = customers.find(c => c.id === form.customer_id)
+        if (cust) {
+          await supabase.from('orders').update({ customer_id: cust.id, customer_name: cust.name }).eq('id', draftOrderId)
+        }
+      } catch {}
+    })()
+  }, [draftOrderId, form.customer_id, customers])
 
   async function saveOrder(){
     // Infer garment if not explicitly chosen
@@ -649,13 +944,21 @@ export default function Orders() {
         notes: form.notes || null,
         status: 'new',
       }
-      const { data: inserted, error } = await supabase
-        .from('orders')
-        .insert(payload)
-        .select('id')
-        .single()
-      if (error) throw error
-      const newOrderId = inserted?.id
+      let newOrderId = draftOrderId
+      if (newOrderId) {
+        // Update existing draft order into a full order
+        const { error: updErr } = await supabase.from('orders').update(payload).eq('id', newOrderId)
+        if (updErr) throw updErr
+      } else {
+        // Fallback: create if no draft exists
+        const { data: inserted, error } = await supabase
+          .from('orders')
+          .insert(payload)
+          .select('id')
+          .single()
+        if (error) throw error
+        newOrderId = inserted?.id
+      }
       // Also store a copy of current measurements under an order-specific key for future invoices
       try {
         const cust = useNewCustomer ? { name: newCustomer.name, phone: newCustomer.phone, id: customerId } : customers.find(c => c.id === customerId)
@@ -666,6 +969,7 @@ export default function Orders() {
         }
       } catch {}
       setOpen(false)
+      setDraftOrderId(null)
       await loadOrders()
     } catch (e) {
       const rawMsg = String(e?.message || 'Unknown error')
@@ -729,12 +1033,23 @@ export default function Orders() {
       }
       const newItems = {
         ...baseItems,
+        garment_category: viewOrder.items?.garment_category || baseItems.garment_category || 'thobe',
         quantities: newQuantities,
         quantity: qThobe + qSirwal + totalExtras,
+        // keep any edited measurements/extras already present on viewOrder.items
       }
-      const payload = { notes: viewOrder.notes ?? null, delivery_date: viewOrder.delivery_date || null, items: newItems }
+      const payload = {
+        notes: viewOrder.notes ?? null,
+        delivery_date: viewOrder.delivery_date || null,
+        items: newItems,
+        // allow customer reassignment from edit modal
+        ...(viewOrder.customer_id ? { customer_id: viewOrder.customer_id } : {}),
+        ...(viewOrder.customer_name ? { customer_name: viewOrder.customer_name } : {}),
+      }
       const { error } = await supabase.from('orders').update(payload).eq('id', viewOrder.id)
       if (error) throw error
+      // Make sure the invoice button flips to Update if an invoice already exists
+      await ensureInvoiceState(viewOrder.id)
       setViewOpen(false)
       setViewOrder(null)
       await loadOrders()
@@ -775,13 +1090,21 @@ export default function Orders() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredOrders.map(o => (
-              <div key={o.id} className="rounded-xl bg-white/5 border border-white/10 p-4 text-white/90 space-y-2">
+              <div
+                key={o.id}
+                id={`order-card-${o.id}`}
+                className={`rounded-xl bg-white/5 border p-4 text-white/90 space-y-2 ${focusOrderId===o.id ? 'border-emerald-400/60 ring-2 ring-emerald-400/40 ring-offset-2 ring-offset-slate-900' : 'border-white/10'}`}
+              >
                 <div className="flex items-center justify-between">
                   <div className="text-white/85 font-medium truncate" title={o.customer_name || ''}>{o.customer_name || '—'}</div>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={()=> openView(o)} className="text-xs px-2 py-1 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10" title="View">View</button>
-                    <button type="button" onClick={()=> deleteOrder(o.id)} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-200 hover:bg-red-500/10">Delete</button>
-                  </div>
+                  <button type="button" onClick={()=> openView(o)} className="text-xs px-2 py-1 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10" title={t('orders.view', { defaultValue: 'View' })}>View</button>
+                  <PermissionGate module="orders" action="update">
+                    <button type="button" onClick={()=> openView(o)} className="text-xs px-2 py-1 rounded border border-sky-400/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25" title={t('orders.edit', { defaultValue: 'Edit' })}>Edit</button>
+                  </PermissionGate>
+                  <button type="button" onClick={()=> deleteOrder(o.id)} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-200 hover:bg-red-500/10">{t('orders.delete', { defaultValue: 'Delete' })}</button>
+                  {/* Moved invoice button to footer to avoid duplicates */}
+                </div>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-white/70">
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">{o.customer?.phone || '—'}</span>
@@ -803,10 +1126,23 @@ export default function Orders() {
                 )}
                 <div className="text-xs text-white/40" title={o.id || ''}>Order ID: #{o.id?.slice(0,8)}</div>
                 <div className="text-sm line-clamp-2 text-white/80">{o.notes || t('orders.noNotes', { defaultValue: 'No notes' })}</div>
-                <div className="pt-1 flex items-center justify-end gap-2">
-                  <PermissionGate module="invoices" action="create">
-                    <button type="button" onClick={()=> issueInvoice(o)} disabled={issuingId === o.id} className="text-xs px-2 py-1 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30 disabled:opacity-60">{issuingId === o.id ? 'Issuing…' : 'Issue Invoice'}</button>
-                  </PermissionGate>
+                <div className="pt-1 flex items-center justify-between gap-2">
+                  {invoicesByOrder[o.id] ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-600/15 border border-emerald-400/40 text-emerald-100" title={`Invoice created${invoicesByOrder[o.id]?.updates ? ` • Updated ${invoicesByOrder[o.id].updates}x` : ''}`}>
+                      ✓ Invoice {invoicesByOrder[o.id]?.updates ? `updated ${invoicesByOrder[o.id].updates}x` : 'created'}
+                    </span>
+                  ) : <span />}
+                  {(canInvCreate || canInvUpdate) && (
+                    <button
+                      type="button"
+                      onClick={()=> issueInvoice(o)}
+                      disabled={(() => { const inv = invoicesByOrder[o.id]; return issuingId === o.id || (inv && stableStringify(o.items||{}) === stableStringify(inv.items||{})); })()}
+                      className={`text-xs px-2 py-1 rounded border ${invoicesByOrder[o.id] ? 'border-amber-400/40 bg-amber-600/20 text-amber-100 hover:bg-amber-600/30' : 'border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30'} disabled:opacity-60`}
+                      title={(() => { const inv = invoicesByOrder[o.id]; if (!inv) return 'Create invoice'; return (stableStringify(o.items||{}) === stableStringify(inv.items||{})) ? 'No order changes to invoice' : 'Update invoice'; })()}
+                    >
+                      {(() => { const inv = invoicesByOrder[o.id]; if (issuingId === o.id) return 'Issuing…'; return inv ? `Update Invoice${inv?.updates ? ` (${inv.updates})` : ''}` : 'Create Invoice' })()}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -815,10 +1151,15 @@ export default function Orders() {
       </div>
 
       {open && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm overflow-y-auto" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
-          <div className="w-full max-w-2xl mx-auto my-8 rounded-2xl border border-white/10 bg-slate-900 p-4 shadow-xl" onClick={(e)=> e.stopPropagation()}>
-            <div className="flex items-center justify-between sticky top-0 bg-slate-900/95 backdrop-blur px-0 pb-3">
-              <div className="text-white/90 font-medium">{t('orders.modal.newOrderTitle', { defaultValue: 'New Order' })}</div>
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
+          <div className="w-full max-w-3xl mx-auto my-8 rounded-2xl border border-white/10 bg-slate-900 p-4 shadow-xl flex flex-col max-h-[80vh] overflow-hidden" onClick={(e)=> e.stopPropagation()}>
+            <div className="flex items-center justify-between sticky top-0 bg-slate-900/95 backdrop-blur px-0 pb-3 z-10">
+              <div className="text-white/90 font-medium">
+                {t('orders.modal.newOrderTitle', { defaultValue: 'New Order' })}
+                {draftOrderId && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded-full align-middle"># {short(draftOrderId)}</span>
+                )}
+              </div>
               <button onClick={()=> setOpen(false)} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
             </div>
             {formError && (
@@ -826,7 +1167,7 @@ export default function Orders() {
                 {formError}
               </div>
             )}
-            <div className="mt-2 space-y-4">
+            <div className="mt-2 space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
               <div>
                 <label className="block text-sm text-white/70 mb-1">{t('orders.form.customer', { defaultValue: 'Customer' })}</label>
                 <div className="flex items-center gap-4 mb-2">
@@ -909,6 +1250,20 @@ export default function Orders() {
                   <div className="mt-2 text-xs text-amber-300">{formError}</div>
                 )}
                 <div className="text-[11px] text-white/40 mt-1">{t('orders.form.measureInfo', { defaultValue: 'Blue dot shows measurements present in this order. Use Clear to remove them for this order only. Saved customer measurements are not modified.' })}</div>
+              </div>
+
+              {/* Due date */}
+              <div className="grid grid-cols-2 gap-4 mt-2">
+                <div>
+                  <label className="block text-sm text-white/70 mb-1">{t('orders.form.dueDate', { defaultValue: 'Due date' })}</label>
+                  <input
+                    type="date"
+                    value={form.due_date}
+                    onChange={(e)=> setForm(f => ({ ...f, due_date: e.target.value }))}
+                    className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
+                    min={new Date().toISOString().slice(0,10)}
+                  />
+                </div>
               </div>
 
               {/* Quantities per type */}
@@ -1250,28 +1605,48 @@ export default function Orders() {
               <button onClick={()=> { setViewOpen(false); setViewOrder(null) }} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
             </div>
             <div className="space-y-4 text-sm max-h-[75vh] overflow-y-auto pr-1">
-              {/* Customer (read-only, no new customer UI) */}
+              {/* Customer (allow reassignment) */}
               <div>
                 <label className="block text-sm text-white/70 mb-1">Customer</label>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-white/70">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">Code: {computeCustomerCode(viewBizName, viewOrder.customer_name || '', viewOrder.customer?.phone || '') || '—'}</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">{viewOrder.customer_name || '—'}</span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">{viewOrder.customer?.phone || '—'}</span>
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={viewOrder.customer_id || viewOrder.customer?.id || ''}
+                    onChange={(e)=> {
+                      const id = e.target.value
+                      const cust = customers.find(c => c.id === id)
+                      setViewOrder(v => ({ ...v, customer_id: id, customer_name: cust?.name || v.customer_name, customer: { ...(v.customer||{}), id, phone: cust?.phone || v.customer?.phone } }))
+                    }}
+                    className="rounded bg-white border border-white/10 px-3 py-2 text-sm text-black"
+                  >
+                    <option value="">Select customer…</option>
+                    {customers.map(c => (
+                      <option key={c.id} value={c.id}>{c.name || 'Unnamed'} {c.phone ? `(${c.phone})` : ''}</option>
+                    ))}
+                  </select>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-white/70">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">Code: {computeCustomerCode(viewBizName, viewOrder.customer_name || '', viewOrder.customer?.phone || '') || '—'}</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">{viewOrder.customer_name || '—'}</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">{viewOrder.customer?.phone || '—'}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Garments & Measurements (compact) */}
+              {/* Garments & Measurements (editable) */}
               <div>
                 <label className="block text-sm text-white/70 mb-1">Garments & Measurements</label>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${viewOrder.items?.garment_category==='thobe' ? 'bg-white/5 border-white/10 text-white/85' : 'bg-white/5 border-white/10 text-white/50'}`}>
+                  <button type="button" onClick={()=> setViewOrder(v => ({ ...v, items: { ...(v.items||{}), garment_category: 'thobe' } }))} className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${viewOrder.items?.garment_category==='thobe' ? 'bg-white/5 border-white/10 text-white/85' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}>
                     <span className={`inline-block h-3 w-3 rounded-full border ${viewOrder.items?.garment_category==='thobe' ? 'bg-sky-500 border-sky-500' : 'border-white/40'}`}></span>
                     <span>Thobe</span>
-                  </span>
-                  <span className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${viewOrder.items?.garment_category==='sirwal_falina' ? 'bg-white/5 border-white/10 text-white/85' : 'bg-white/5 border-white/10 text-white/50'}`}>
+                  </button>
+                  <button type="button" onClick={()=> setViewOrder(v => ({ ...v, items: { ...(v.items||{}), garment_category: 'sirwal_falina' } }))} className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${viewOrder.items?.garment_category==='sirwal_falina' ? 'bg-white/5 border-white/10 text-white/85' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}>
                     <span className={`inline-block h-3 w-3 rounded-full border ${viewOrder.items?.garment_category==='sirwal_falina' ? 'bg-sky-500 border-sky-500' : 'border-white/40'}`}></span>
                     <span>Sirwal / Falina</span>
-                  </span>
+                  </button>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button type="button" onClick={()=> { setEditMeasureType('thobe'); setEditMeasureValues(viewOrder.items?.measurements?.thobe || {}); setEditMeasureOpen(true) }} className="text-xs px-2 py-1 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">Edit Thobe Measurements</button>
+                    <button type="button" onClick={()=> { setEditMeasureType('sirwal_falina'); setEditMeasureValues(viewOrder.items?.measurements?.sirwal_falina || {}); setEditMeasureOpen(true) }} className="text-xs px-2 py-1 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">Edit Sirwal/Falina Measurements</button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-2">
                   <div>

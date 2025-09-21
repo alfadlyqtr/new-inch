@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
 import MeasurementOverlay from "../customers/MeasurementOverlay.jsx"
+import { supabase } from "../../lib/supabaseClient.js"
 
 /**
  * SirwalFalinaWizard
@@ -18,6 +19,10 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
   const prevUnitRef = useRef(unit)
   const fieldsRef = useRef(null)
   const [moveFixed, setMoveFixed] = useState(false)
+
+  // Inventory-backed options (e.g., fabrics)
+  const [businessId, setBusinessId] = useState(null)
+  const [fabricTypes, setFabricTypes] = useState([])
 
   // Default positions for common trouser measurements
   const DEFAULT_POS_SIRWAL = useMemo(() => ({
@@ -63,8 +68,24 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
   // Free-form notes for special instructions or multiple styles
   const [notes, setNotes] = useState(() => initial.notes || '')
 
-  // Diagram annotations (e.g., dimension lines)
-  const [annotations, setAnnotations] = useState(() => initial.annotations || {})
+  // Style/options (separate step)
+  const [options, setOptions] = useState(() => initial.options || {
+    fabric_type: [],
+    waistband_type: [], // e.g., Elastic, Drawstring
+    season: '',         // Summer | Winter | All-season
+  })
+
+  function toggleArrayOption(group, key){
+    setOptions(prev => {
+      const set = new Set(prev[group] || [])
+      if (set.has(key)) set.delete(key); else set.add(key)
+      return { ...prev, [group]: Array.from(set) }
+    })
+  }
+
+  // Diagram annotations per diagram (no cross-diagram bleed)
+  const [annotationsSirwal, setAnnotationsSirwal] = useState(() => (initial.annotations?.sirwal ?? {}))
+  const [annotationsFalina, setAnnotationsFalina] = useState(() => (initial.annotations?.falina ?? {}))
 
   // Unit conversion for all values & points
   useEffect(() => {
@@ -93,14 +114,19 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
       fixedPositions: { sirwal: fixedSirwal, falina: fixedFalina },
       points: { sirwal: sirwalPts, falina: falinaPts },
       notes,
-      annotations,
+      options,
+      annotations: {
+        ...(Object.keys(annotationsSirwal||{}).length ? { sirwal: annotationsSirwal } : {}),
+        ...(Object.keys(annotationsFalina||{}).length ? { falina: annotationsFalina } : {}),
+      },
     }
     onDone?.({ measurements })
   }
 
   const steps = [
-    { key: 'sirwal', title: 'Sirwal Diagram', img: '/measurements/Sirwal-Falina-Measurements/sirwal.png', defaults: DEFAULT_POS_SIRWAL },
-    { key: 'falina', title: 'Falina Diagram', img: '/measurements/Sirwal-Falina-Measurements/falina.png', defaults: DEFAULT_POS_FALINA },
+    { key: 'sirwal',  title: 'Sirwal Diagram',  img: '/measurements/Sirwal-Falina-Measurements/sirwal.png',  defaults: DEFAULT_POS_SIRWAL },
+    { key: 'falina',  title: 'Falina Diagram',  img: '/measurements/Sirwal-Falina-Measurements/falina.png',  defaults: DEFAULT_POS_FALINA },
+    { key: 'options', title: 'Options' },
     { key: 'summary', title: 'Summary' },
   ]
   const s = steps[step]
@@ -189,8 +215,8 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
                 { key: 'bottom_width', label: 'Bottom Width', default: DEFAULT_POS_SIRWAL.bottom_width },
                 { key: 'rise', label: 'Rise', default: DEFAULT_POS_SIRWAL.rise },
               ]}
-              annotations={annotations}
-              onAnnotationsChange={setAnnotations}
+              annotations={annotationsSirwal}
+              onAnnotationsChange={setAnnotationsSirwal}
             />
             <LabelsPanel title="Labels" values={sirwalVals} setValues={setSirwalVals} points={sirwalPts} setPoints={setSirwalPts} unit={unit} panelRef={fieldsRef} defaultKeys={['waist','hips','outseam_length','bottom_width','rise']} />
           </div>
@@ -219,18 +245,60 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
                 { key: 'length', label: 'Length', default: DEFAULT_POS_FALINA.length },
                 { key: 'bottom_width', label: 'Bottom Width', default: DEFAULT_POS_FALINA.bottom_width },
               ]}
-              annotations={annotations}
-              onAnnotationsChange={setAnnotations}
+              annotations={annotationsFalina}
+              onAnnotationsChange={setAnnotationsFalina}
             />
             <LabelsPanel title="Labels" values={falinaVals} setValues={setFalinaVals} points={falinaPts} setPoints={setFalinaPts} unit={unit} panelRef={fieldsRef} defaultKeys={['neck','chest','armhole_depth','length','bottom_width']} />
           </div>
         )}
+        {s.key==='options' && (
+          <div className="space-y-6">
+            {/* Load business and inventory for fabrics */}
+            <OptionsLoader businessId={businessId} setBusinessId={setBusinessId} setFabricTypes={setFabricTypes} />
+
+            <div>
+              <div className="text-white/80 font-medium mb-2">Fabric Type</div>
+              <div className="flex flex-wrap gap-2">
+                {(fabricTypes.length ? fabricTypes : ['Cotton','Polyester','Blend']).map(key => {
+                  const checked = (options.fabric_type||[]).includes(key)
+                  return (
+                    <button key={key} type="button" onClick={()=> toggleArrayOption('fabric_type', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-white/80 font-medium mb-2">Waistband</div>
+              <div className="flex flex-wrap gap-2">
+                {['Elastic','Drawstring','Elastic + Drawstring'].map(key => {
+                  const checked = (options.waistband_type||[]).includes(key)
+                  return (
+                    <button key={key} type="button" onClick={()=> toggleArrayOption('waistband_type', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-sky-500/15 border-sky-400/40 text-sky-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-white/80 font-medium mb-2">Season</div>
+              <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+                {['Summer','Winter','All-season'].map(key => (
+                  <button key={key} type="button" onClick={()=> setOptions(prev => ({ ...prev, season: key }))} className={`px-3 py-1.5 text-sm ${options.season===key ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>{key}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {s.key==='summary' && (
           <div className="space-y-4">
             <div className="text-white/80 font-medium">Sirwal</div>
             <KeyVals obj={sirwalVals} />
             <div className="text-white/80 font-medium mt-4">Falina</div>
             <KeyVals obj={falinaVals} />
+            <div className="text-white/80 font-medium mt-4">Options</div>
+            <SummaryOptions options={options} />
             <div className="mt-4">
               <label className="block text-white/80 font-medium mb-1">Notes</label>
               <textarea
@@ -257,6 +325,46 @@ export default function SirwalFalinaWizard({ initialMeasurements = {}, onDone, o
   )
 }
 
+// Lightweight loader for business and fabric types from inventory
+function OptionsLoader({ businessId, setBusinessId, setFabricTypes }){
+  useEffect(() => {
+    if (businessId) return
+    ;(async () => {
+      try {
+        const { data: sess } = await supabase.auth.getSession()
+        const user = sess?.session?.user
+        if (!user) return
+        const { data: ua } = await supabase
+          .from('users_app')
+          .select('business_id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle()
+        if (ua?.business_id) setBusinessId(ua.business_id)
+      } catch {}
+    })()
+  }, [businessId, setBusinessId])
+
+  useEffect(() => {
+    if (!businessId) return
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('inventory_items')
+          .select('name,category')
+          .eq('business_id', businessId)
+          .eq('category', 'fabric')
+        if (error) throw error
+        const fab = Array.from(new Set((data||[]).map(x => x.name).filter(Boolean)))
+        setFabricTypes(fab)
+      } catch {
+        setFabricTypes([])
+      }
+    })()
+  }, [businessId, setFabricTypes])
+
+  return null
+}
+
 function KeyVals({ obj }){
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
@@ -266,6 +374,26 @@ function KeyVals({ obj }){
           <div className="text-white/90">{String(v || '')}</div>
         </div>
       ))}
+    </div>
+  )
+}
+
+function SummaryOptions({ options = {} }){
+  const entries = Object.entries(options||{})
+  if (!entries.length) return <div className="text-sm text-white/60">—</div>
+  return (
+    <div className="space-y-1">
+      {entries.map(([group, value]) => {
+        const text = Array.isArray(value)
+          ? (value.length ? value.join(', ') : '—')
+          : (value ? String(value) : '—')
+        return (
+          <div key={group} className="text-sm text-white/80">
+            <span className="text-white/60 mr-2">{labelize(group)}:</span>
+            <span>{text}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }

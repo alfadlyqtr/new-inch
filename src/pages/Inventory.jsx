@@ -52,6 +52,10 @@ export default function Inventory() {
   const [ratingFilter, setRatingFilter] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  // Price Book notices
+  const [pbNotice, setPbNotice] = useState('');
+  // Walk-in fabric default unit price (for Price Book)
+  const [walkInDefaultUnit, setWalkInDefaultUnit] = useState(0);
   // Receive / Adjust modals
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveItem, setReceiveItem] = useState(null);
@@ -82,6 +86,80 @@ export default function Inventory() {
     };
     fetchSession();
   }, []);
+
+  // --- Price Book helpers (component scope) ---
+  const buildPriceBookContent = () => {
+    const currencyCode = labelToCode(pricingCurrency || 'SAR')
+    const normKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g,'_')
+
+    const garmentEntries = []
+    if (priceThobe !== '') garmentEntries.push({ garment_key: 'thobe', base_price: Number(priceThobe)||0, currency: currencyCode, consumption: { base_m: 3, length_bands: [], girth_bands: [], wastage_pct: 10 } })
+    if (priceSirwal !== '') garmentEntries.push({ garment_key: 'sirwal', base_price: Number(priceSirwal)||0, currency: currencyCode, consumption: { base_m: 2, length_bands: [], girth_bands: [], wastage_pct: 8 } })
+    if (priceFalina !== '') garmentEntries.push({ garment_key: 'falina', base_price: Number(priceFalina)||0, currency: currencyCode, consumption: { base_m: 1.5, length_bands: [], girth_bands: [], wastage_pct: 5 } })
+    for (const g of garments || []) {
+      if (!g?.name) continue
+      garmentEntries.push({ garment_key: normKey(g.name), base_price: g.price === '' ? 0 : Number(g.price)||0, currency: currencyCode, consumption: { base_m: 2, length_bands: [], girth_bands: [], wastage_pct: 10 } })
+    }
+
+    return {
+      garments: garmentEntries,
+      fabrics_shop: [],
+      fabrics_walkin: {
+        default_unit_price: Number(walkInDefaultUnit)||0,
+        allow_staff_set_unit_price: true,
+        allow_staff_set_total_value: true,
+        handling_modes_allowed: ["per_garment","per_meter","both"],
+        default_handling_per_garment: 0,
+        default_handling_per_meter: 0
+      },
+      options: [],
+      surcharges: [],
+      discounts: [],
+      taxes_rounding: { source: 'settings', vat_pct: null, rounding: 'settings' },
+      stock: { decrement_shop_fabric_on_issue: true }
+    }
+  }
+
+  const savePriceBookDraft = async () => {
+    if (!ids.business_id) { setPbNotice('Missing business'); setTimeout(()=>setPbNotice(''), 2000); return }
+    try {
+      setPbNotice('Saving draft…')
+      const content = buildPriceBookContent()
+      const { error } = await supabase
+        .from('pricebooks')
+        .insert({ business_id: ids.business_id, status: 'draft', content })
+      if (error) throw error
+      setPbNotice('Draft saved')
+      setTimeout(()=> setPbNotice(''), 2000)
+    } catch (e) {
+      setPbNotice(e?.message || 'Failed to save draft')
+      setTimeout(()=> setPbNotice(''), 2500)
+    }
+  }
+
+  const activateLatestDraft = async () => {
+    if (!ids.business_id) { setPbNotice('Missing business'); setTimeout(()=>setPbNotice(''), 2000); return }
+    try {
+      setPbNotice('Activating…')
+      const { data: draft } = await supabase
+        .from('pricebooks')
+        .select('id, created_at')
+        .eq('business_id', ids.business_id)
+        .eq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (!draft?.id) { setPbNotice('No draft found'); setTimeout(()=>setPbNotice(''), 2000); return }
+      await supabase.from('pricebooks').update({ status: 'draft' }).eq('business_id', ids.business_id).eq('status','active')
+      const { error } = await supabase.from('pricebooks').update({ status: 'active', effective_from: new Date().toISOString() }).eq('id', draft.id)
+      if (error) throw error
+      setPbNotice('Activated')
+      setTimeout(()=> setPbNotice(''), 2000)
+    } catch (e) {
+      setPbNotice(e?.message || 'Failed to activate')
+      setTimeout(()=> setPbNotice(''), 2500)
+    }
+  }
 
   // Fetch inventory data when business_id is available
   useEffect(() => {
@@ -654,6 +732,9 @@ export default function Inventory() {
                 >
                   Save Pricing
                 </button>
+                <button onClick={savePriceBookDraft} className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg border border-white/15 transition-colors" title="Save Price Book (Draft)">Save Price Book (Draft)</button>
+                <button onClick={activateLatestDraft} className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition-colors" title="Activate latest draft">Activate Draft</button>
+                {pbNotice && <div className="text-xs text-slate-300 ml-2">{pbNotice}</div>}
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -670,6 +751,11 @@ export default function Inventory() {
               <div>
                 <label className="block text-white/70 mb-1">Default Markup (%)</label>
                 <input type="number" value={markupPct} onChange={(e)=> setMarkupPct(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 25" />
+              </div>
+              <div>
+                <label className="block text-white/70 mb-1">Walk‑in Fabric Default Unit Price</label>
+                <input type="number" step="0.01" value={walkInDefaultUnit} onChange={(e)=> setWalkInDefaultUnit(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="0" />
+                <div className="text-[11px] text-white/50 mt-1">This is used as the starting unit price for walk‑in fabric on invoices.</div>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
