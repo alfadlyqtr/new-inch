@@ -22,6 +22,8 @@ const Reports = React.lazy(() => import("./pages/Reports.jsx"))
 const NewCustomer = React.lazy(() => import("./pages/NewCustomer.jsx"))
 const Messages = React.lazy(() => import("./pages/Messages.jsx"))
 const PublicProfile = React.lazy(() => import("./pages/PublicProfile.jsx"))
+const PublicInvoice = React.lazy(() => import("./pages/PublicInvoice.jsx"))
+const InvoiceDetail = React.lazy(() => import("./pages/invoices/InvoiceDetail.jsx"))
 const Settings = React.lazy(() => import("./pages/Settings.jsx"))
 const AdminAuth = React.lazy(() => import("./pages/AdminAuth.jsx"))
 const Home = React.lazy(() => import("./pages/Home.jsx"))
@@ -474,6 +476,11 @@ function App() {
               <Invoices />
             </Suspense>
           } />
+          <Route path="invoices/:id" element={
+            <Suspense fallback={<div>Loading...</div>}>
+              <InvoiceDetail />
+            </Suspense>
+          } />
           <Route path="inventory" element={
             <Suspense fallback={<div>Loading...</div>}>
               <Inventory />
@@ -580,6 +587,11 @@ function App() {
           } />
         </Route>
         {/* Public profile viewer routes (place before 404) */}
+        <Route path="/i/:token" element={
+          <Suspense fallback={<div>Loading...</div>}>
+            <PublicInvoice />
+          </Suspense>
+        } />
         <Route path="/business/:idOrSlug" element={
           <Suspense fallback={<div>Loading...</div>}>
             <PublicBusiness />

@@ -6,9 +6,10 @@ import MeasurementOverlay from "../components/customers/MeasurementOverlay.jsx"
 import ThobeWizard from "../components/measurements/ThobeWizard.jsx"
 import SirwalFalinaWizard from "../components/measurements/SirwalFalinaWizard.jsx"
 import { saveMeasurementsForCustomer, loadMeasurementsForCustomer, copyLatestToOrder, buildMeasurementKey } from "../lib/measurementsStorage.js"
-import { useLocation } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from 'react-i18next'
 import { computeLinePrice, computeInvoiceTotals, normalizePriceBook } from "../lib/pricingEngine.js"
+import { ensureInvoiceFromOrder } from "../lib/invoicesApi.js"
 
 export default function Orders() {
   const { t } = useTranslation()
@@ -51,6 +52,7 @@ export default function Orders() {
   const [invoiceCfg, setInvoiceCfg] = useState({ currency: 'SAR', vat_percent: 0, rounding: 'none' })
   // Deep-link support: focus a specific order card via ?orderId=...
   const location = useLocation()
+  const navigate = useNavigate()
   const [focusOrderId, setFocusOrderId] = useState(null)
   // Edit modal measurement editor (isolated from create flow)
   const [editMeasureOpen, setEditMeasureOpen] = useState(false)
@@ -65,6 +67,29 @@ export default function Orders() {
     try {
       return JSON.stringify(obj, Object.keys(obj||{}).sort())
     } catch { return JSON.stringify(obj||{}) }
+  }
+
+  // Simple one-click create/open invoice for an order (frontend only)
+  async function createOrOpenInvoice(o){
+    try {
+      if (!o?.id || !ids.business_id) throw new Error('Missing order or business')
+      const invId = await ensureInvoiceFromOrder({
+        orderId: o.id,
+        businessId: ids.business_id,
+        customerId: o.customer_id,
+        dueDate: o.due_date || o.delivery_date || null,
+        currency: invoiceCfg?.currency || 'SAR',
+      })
+      // Toast success (graceful if toast lib not present)
+      try { if (window && window.toast && typeof window.toast.success === 'function') window.toast.success('Invoice ready') } catch {}
+      try { alert('Invoice ready') } catch {}
+      // Redirect to Invoice Detail page
+      navigate(`/bo/invoices/${invId}`)
+    } catch (e) {
+      console.error('create/open invoice failed', e)
+      try { if (window && window.toast && typeof window.toast.error === 'function') window.toast.error(e?.message||'Failed') } catch {}
+      try { alert(e?.message || 'Failed to open invoice') } catch {}
+    }
   }
 
   // Load active price book, inventory items, and invoice settings
@@ -164,6 +189,8 @@ export default function Orders() {
         .from('invoices')
         .select('id, order_id, status, issued_at')
         .eq('order_id', orderId)
+        .order('issued_at', { ascending: false, nullsFirst: false })
+        .limit(1)
         .maybeSingle()
       if (inv?.order_id) setInvoicesByOrder(prev => ({ ...prev, [inv.order_id]: { id: inv.id, status: inv.status, created_at: inv.issued_at, updates: prev[inv.order_id]?.updates || 0 } }))
     } catch {}
@@ -313,13 +340,16 @@ export default function Orders() {
         .select('id, items, totals, issued_at, status')
         .eq('order_id', o.id)
         .maybeSingle()
+      let finalInvoiceId = null
       if (existingInv?.id) {
         // Skip update if nothing changed since last invoice
         const sameItems = stableStringify(existingInv.items||{}) === stableStringify(payload.items||{})
         const sameTotals = stableStringify(existingInv.totals||{}) === stableStringify(payload.totals||{})
         if (sameItems && sameTotals) {
-          alert('No order changes detected since last invoice. Nothing to update.')
-          let finalInvoiceId = null
+          // No changes, just redirect
+          finalInvoiceId = existingInv.id
+          navigate(`/bo/invoice/${finalInvoiceId}`)
+          return
         }
         const { error: upErr } = await supabase.from('invoices').update(payload).eq('id', existingInv.id)
         if (upErr) throw upErr
@@ -334,7 +364,7 @@ export default function Orders() {
             totals: payload.totals,
           }
         }))
-        let finalInvoiceId = existingInv.id
+        finalInvoiceId = existingInv.id
         // Emit an 'invoice-updated' event after creating/updating an invoice so other components (like CustomerCard) can reload invoices for that customer.
         try {
           const detail = { type: 'invoice-updated', customerId: cust.id, orderId: o.id, invoiceId: finalInvoiceId }
@@ -346,7 +376,7 @@ export default function Orders() {
         const { data: insInv, error: invErr } = await supabase.from('invoices').insert(payload).select('id,issued_at,status').single()
         if (invErr) throw invErr
         setInvoicesByOrder(prev => ({ ...prev, [o.id]: { id: insInv.id, status: insInv.status, created_at: insInv.issued_at, updates: 0, items: payload.items, totals: payload.totals } }))
-        let finalInvoiceId = insInv.id
+        finalInvoiceId = insInv.id
         // Emit an 'invoice-updated' event after creating/updating an invoice so other components (like CustomerCard) can reload invoices for that customer.
         try {
           const detail = { type: 'invoice-updated', customerId: cust.id, orderId: o.id, invoiceId: finalInvoiceId }
@@ -370,7 +400,8 @@ export default function Orders() {
       }
       await supabase.from('orders').update(ordUpdate).eq('id', o.id)
 
-      alert('Invoice issued')
+      // Navigate to Invoice Detail for final review/print/send
+      if (finalInvoiceId) navigate(`/bo/invoice/${finalInvoiceId}`)
 
       // Broadcast invoice update so CustomerCard and other views can refresh
       try {
@@ -1128,19 +1159,18 @@ export default function Orders() {
                 <div className="text-sm line-clamp-2 text-white/80">{o.notes || t('orders.noNotes', { defaultValue: 'No notes' })}</div>
                 <div className="pt-1 flex items-center justify-between gap-2">
                   {invoicesByOrder[o.id] ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-600/15 border border-emerald-400/40 text-emerald-100" title={`Invoice created${invoicesByOrder[o.id]?.updates ? ` • Updated ${invoicesByOrder[o.id].updates}x` : ''}`}>
-                      ✓ Invoice {invoicesByOrder[o.id]?.updates ? `updated ${invoicesByOrder[o.id].updates}x` : 'created'}
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-600/15 border border-emerald-400/40 text-emerald-100" title={`Invoice exists${invoicesByOrder[o.id]?.updates ? ` • Updated ${invoicesByOrder[o.id].updates}x` : ''}`}>
+                      ✓ Invoice ready
                     </span>
                   ) : <span />}
                   {(canInvCreate || canInvUpdate) && (
                     <button
                       type="button"
-                      onClick={()=> issueInvoice(o)}
-                      disabled={(() => { const inv = invoicesByOrder[o.id]; return issuingId === o.id || (inv && stableStringify(o.items||{}) === stableStringify(inv.items||{})); })()}
-                      className={`text-xs px-2 py-1 rounded border ${invoicesByOrder[o.id] ? 'border-amber-400/40 bg-amber-600/20 text-amber-100 hover:bg-amber-600/30' : 'border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30'} disabled:opacity-60`}
-                      title={(() => { const inv = invoicesByOrder[o.id]; if (!inv) return 'Create invoice'; return (stableStringify(o.items||{}) === stableStringify(inv.items||{})) ? 'No order changes to invoice' : 'Update invoice'; })()}
+                      onClick={()=> createOrOpenInvoice(o)}
+                      className="text-xs px-2 py-1 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30"
+                      title={invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
                     >
-                      {(() => { const inv = invoicesByOrder[o.id]; if (issuingId === o.id) return 'Issuing…'; return inv ? `Update Invoice${inv?.updates ? ` (${inv.updates})` : ''}` : 'Create Invoice' })()}
+                      {invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
                     </button>
                   )}
                 </div>

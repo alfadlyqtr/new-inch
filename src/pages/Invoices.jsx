@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react"
-import { useLocation } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useCan, PermissionGate, Forbidden } from "../lib/permissions.jsx"
 import { supabase } from "../lib/supabaseClient.js"
 import MeasurementOverlay from "../components/customers/MeasurementOverlay.jsx"
 import { loadMeasurementsForCustomer, buildMeasurementKey } from "../lib/measurementsStorage.js"
 import { computeLinePrice, computeInvoiceTotals, normalizePriceBook } from "../lib/pricingEngine.js"
+import PaymentModal from "../components/invoices/PaymentModal.jsx"
 
 export default function Invoices() {
   const canView = useCan('invoices','view')
@@ -18,7 +19,18 @@ export default function Invoices() {
   const [sirwalSnap, setSirwalSnap] = useState(null)
   const [saving, setSaving] = useState(false)
   const [invoices, setInvoices] = useState([])
+  const [filtered, setFiltered] = useState([])
+  // Filters
+  const [fStatus, setFStatus] = useState('')
+  const [fCustomer, setFCustomer] = useState('')
+  const [fFrom, setFFrom] = useState('')
+  const [fTo, setFTo] = useState('')
+  const [fAmtMin, setFAmtMin] = useState('')
+  const [fAmtMax, setFAmtMax] = useState('')
+  // Selection for bulk actions
+  const [selIds, setSelIds] = useState(new Set())
   const location = useLocation()
+  const navigate = useNavigate()
   const [focusInvoiceId, setFocusInvoiceId] = useState(null)
   const canDelete = useCan('invoices','delete')
   const [confirmDelId, setConfirmDelId] = useState(null)
@@ -37,6 +49,9 @@ export default function Invoices() {
   // Preview modal
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState(null)
+  // Payments modal
+  const [payOpen, setPayOpen] = useState(false)
+  const [payInvoice, setPayInvoice] = useState(null)
 
   useEffect(() => {
     ;(async () => {
@@ -135,7 +150,9 @@ export default function Invoices() {
         .neq('status', 'void')
         .order('issued_at', { ascending: false })
         .limit(50)
-      setInvoices(data || [])
+      const list = data || []
+      setInvoices(list)
+      setFiltered(list)
     })()
   }, [ids.business_id])
 
@@ -182,6 +199,88 @@ export default function Invoices() {
       try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {}
     }
   }, [focusInvoiceId, invoices])
+
+  // Apply client-side filters when inputs or invoices change
+  useEffect(() => {
+    try {
+      let rows = [...(invoices || [])]
+      if (fStatus) rows = rows.filter(r => String(r.status||'').toLowerCase() === String(fStatus).toLowerCase())
+      if (fCustomer) rows = rows.filter(r => (r.customer_name||'').toLowerCase().includes(fCustomer.toLowerCase()))
+      if (fFrom) rows = rows.filter(r => r.issued_at && new Date(r.issued_at) >= new Date(fFrom))
+      if (fTo) rows = rows.filter(r => r.issued_at && new Date(r.issued_at) <= new Date(fTo))
+      const getAmt = (r) => Number(r?.totals?.grand_total ?? r?.totals?.total ?? 0)
+      if (fAmtMin !== '' && !isNaN(Number(fAmtMin))) rows = rows.filter(r => getAmt(r) >= Number(fAmtMin))
+      if (fAmtMax !== '' && !isNaN(Number(fAmtMax))) rows = rows.filter(r => getAmt(r) <= Number(fAmtMax))
+      setFiltered(rows)
+    } catch {}
+  }, [invoices, fStatus, fCustomer, fFrom, fTo, fAmtMin, fAmtMax])
+
+  function toggleSel(id){
+    setSelIds(prev => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+
+  function selectAll(){
+    setSelIds(new Set((filtered||[]).map(r => r.id)))
+  }
+
+  function clearSel(){ setSelIds(new Set()) }
+
+  async function bulkVoid(){
+    try {
+      if (!ids.business_id || selIds.size === 0) return
+      const idsArr = Array.from(selIds)
+      const { error } = await supabase
+        .from('invoices')
+        .update({ status: 'voided' })
+        .in('id', idsArr)
+        .eq('business_id', ids.business_id)
+      if (error) throw error
+      // Refresh list
+      const { data: latest } = await supabase
+        .from('invoices')
+        .select('id, order_id, customer_id, customer_name, issued_at, status, items, totals')
+        .eq('business_id', ids.business_id)
+        .neq('status', 'void')
+        .order('issued_at', { ascending: false })
+        .limit(50)
+      setInvoices(latest || [])
+      clearSel()
+      alert('Selected invoices voided')
+    } catch (e) {
+      alert(e?.message || String(e))
+    }
+  }
+
+  function exportCSV(){
+    const rows = filtered || []
+    const header = ['id','order_id','customer_name','issued_at','status','currency','total']
+    const csv = [header.join(',')].concat(rows.map(r => [
+      r.id,
+      r.order_id,
+      JSON.stringify(r.customer_name||''),
+      r.issued_at || '',
+      r.status || '',
+      r?.totals?.currency || '',
+      (r?.totals?.grand_total ?? r?.totals?.total ?? 0)
+    ].join(','))).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'invoices.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  async function bulkSendStub(){
+    alert('Send selected: email/whatsapp flows can be wired here.')
+  }
 
   useEffect(() => {
     ;(async () => {
@@ -470,151 +569,85 @@ export default function Invoices() {
         </div>
       </div>
 
+    {/* Filters + Bulk actions */}
+    <div className="glass rounded-2xl border border-white/10 p-6">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 w-full">
+          <div className="col-span-2">
+            <label className="block text-white/70 mb-1">Customer</label>
+            <input value={fCustomer} onChange={e=>setFCustomer(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" placeholder="Search name" />
+          </div>
+          <div>
+            <label className="block text-white/70 mb-1">Status</label>
+            <select value={fStatus} onChange={e=>setFStatus(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
+              <option value="">All</option>
+              {['draft','sent','viewed','part_paid','paid','overdue','voided','refunded'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-white/70 mb-1">From</label>
+            <input type="date" value={fFrom} onChange={e=>setFFrom(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="block text-white/70 mb-1">To</label>
+            <input type="date" value={fTo} onChange={e=>setFTo(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="block text-white/70 mb-1">Min Amount</label>
+            <input type="number" step="0.01" value={fAmtMin} onChange={e=>setFAmtMin(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="block text-white/70 mb-1">Max Amount</label>
+            <input type="number" step="0.01" value={fAmtMax} onChange={e=>setFAmtMax(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={selectAll} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80">Select All</button>
+          <button onClick={clearSel} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80">Clear</button>
+          <button onClick={bulkSendStub} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80">Send Selected</button>
+          <button onClick={bulkVoid} className="px-2 py-1 text-xs rounded border border-rose-500/40 bg-rose-500/10 text-rose-100">Void Selected</button>
+          <button onClick={exportCSV} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80">Export CSV</button>
+        </div>
+      </div>
+    </div>
+
     {/* Recent invoices */}
     <div className="glass rounded-2xl border border-white/10 p-6">
-      <div className="text-white/85 font-medium mb-2">Recent Invoices</div>
-      {/* Pricing preview for the selected order */}
-      {selected && priceBook && (
-        <div className="mb-3 p-3 rounded border border-white/10 bg-white/[0.03] text-xs text-white/80">
-          <div className="font-medium text-white/85 mb-2">Pricing Controls</div>
-          <div className="grid gap-2 md:grid-cols-4">
-            <div>
-              <label className="block text-white/70 mb-1">Fabric source</label>
-              <select value={fabricSource} onChange={(e)=> setFabricSource(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
-                <option value="walkin">Walk‑in (customer fabric)</option>
-                <option value="shop">Shop fabric</option>
-              </select>
-            </div>
-            {fabricSource === 'walkin' && (
-              <>
-                <div>
-                  <label className="block text-white/70 mb-1">Walk‑in unit price</label>
-                  <input type="number" step="0.01" value={walkUnit} onChange={(e)=> setWalkUnit(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" placeholder="0" />
-                </div>
-                <div>
-                  <label className="block text-white/70 mb-1">Walk‑in total (optional)</label>
-                  <input type="number" step="0.01" value={walkTotal} onChange={(e)=> setWalkTotal(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" placeholder="leave empty to use unit price" />
-                </div>
-              </>
-            )}
-            {fabricSource === 'shop' && (
-              <div className="md:col-span-2">
-                <label className="block text-white/70 mb-1">Fabric SKU</label>
-                <select value={fabricSkuId} onChange={(e)=> setFabricSkuId(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
-                  <option value="">Select fabric…</option>
-                  {inventoryItems.filter(i => String(i.category||'').toLowerCase()==='fabric').map(it => (
-                    <option key={it.id} value={it.id}>{it.sku} — {it.name} — {it.sell_price ?? '—'} {it.sell_currency || ''}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div>
-              <label className="block text-white/70 mb-1">Handling per garment</label>
-              <input type="number" step="0.01" value={handlingPerGarment} onChange={(e)=> setHandlingPerGarment(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" placeholder="0" />
-            </div>
-            <div>
-              <label className="block text-white/70 mb-1">Handling per meter</label>
-              <input type="number" step="0.01" value={handlingPerMeter} onChange={(e)=> setHandlingPerMeter(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-white" placeholder="0" />
-            </div>
-          </div>
-          {(() => {
-            try {
-              const order = orders.find(o => o.id === selected)
-              if (!order) return null
-              const gKey = String(order?.items?.garment_category || 'thobe').toLowerCase()
-              const qty = Number(order?.items?.quantity || 1)
-              const mVals = gKey === 'sirwal' || gKey === 'falina' ? (sirwalSnap || thobeSnap) : (thobeSnap || sirwalSnap)
-              const optionsSel = mVals?.options || order?.items?.options || null
-              const selectedFabricItem = inventoryItems.find(i => i.id === fabricSkuId) || null
-              const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: mVals, fabricSource, walkInUnitPrice: Number(walkUnit)||0, walkInTotal: Number(walkTotal||0)||0, fabricSkuItem: selectedFabricItem, optionSelections: optionsSel, inventoryItems, priceBook: priceBook || {}, settings: invoiceSettings, handlingPerGarment: Number(handlingPerGarment)||0, handlingPerMeter: Number(handlingPerMeter)||0 })
-              const totals = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceSettings.vat_percent, rounding: invoiceSettings.rounding, currency: invoiceSettings.currency })
-              return (
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <div>Currency: {invoiceSettings.currency}</div>
-                  <div>VAT: {Number(invoiceSettings.vat_percent||0).toFixed(0)}%</div>
-                  <div>Rounding: {invoiceSettings.rounding || 'none'}</div>
-                  <div className="text-white/85">Preview Total: {Number(totals.total||0).toFixed(2)} {totals.currency}</div>
-                </div>
-              )
-            } catch {
-              return (
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <div>Currency: {invoiceSettings.currency}</div>
-                  <div>VAT: {Number(invoiceSettings.vat_percent||0).toFixed(0)}%</div>
-                  <div>Rounding: {invoiceSettings.rounding || 'none'}</div>
-                </div>
-              )
-            }
-          })()}
-          <div className="text-white/60 mt-1">Totals will include Base + Options now; Fabric priced when you pick source.</div>
-        </div>
-      )}
-      {invoices.length === 0 ? (
+      <div className="text-white/85 font-medium mb-2">Invoices</div>
+      {filtered.length === 0 ? (
         <div className="text-sm text-slate-400">No invoices yet</div>
       ) : (
-        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-          {invoices.map(inv => (
-            <div
-              key={inv.id}
-              id={`invoice-card-${inv.id}`}
-              className={`rounded border p-3 text-white/85 text-sm bg-white/[0.03] ${focusInvoiceId===inv.id ? 'border-emerald-400/60 ring-2 ring-emerald-400/40 ring-offset-2 ring-offset-slate-900' : 'border-white/10'}`}
-            >
-              <div className="flex items-center justify-between">
-                <div>#{String(inv.id).slice(0,8)}</div>
-                <div className="text-xs text-slate-400">{inv.issued_at ? new Date(inv.issued_at).toLocaleDateString() : '—'}</div>
-              </div>
-              <div className="text-slate-300 mt-1">{inv.customer_name || '—'}</div>
-              <div className="text-xs text-slate-400 mt-1">Order: {String(inv.order_id).slice(0,8)} • {inv.status}</div>
-              {/* Match order info */}
-              {inv.items && (
-                <div className="mt-1 text-xs text-white/70 flex items-center justify-between">
-                  <div className="uppercase tracking-wide">{inv.items.garment_category || '—'}</div>
-                  <div>Qty: {inv.items.quantity ?? '—'}</div>
-                </div>
-              )}
-              {inv.totals && (
-                <div className="mt-1 text-xs text-white/80">
-                  Total: {Number(inv.totals.total||0).toFixed(2)} {inv.totals.currency || invoiceSettings.currency}
-                </div>
-              )}
-              <div className="mt-2 flex items-center justify-between">
-                <div>
-                  {canDelete ? (
-                    confirmDelId === inv.id ? (
-                      <button
-                        type="button"
-                        disabled={deletingId === inv.id}
-                        onClick={()=> deleteInvoice(inv.id)}
-                        className="px-2 py-1 text-xs rounded bg-rose-600 text-white border border-rose-500 disabled:opacity-60 hover:bg-rose-500"
-                        title="Confirm delete"
-                      >
-                        {deletingId === inv.id ? 'Deleting…' : 'Confirm'}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={()=> setConfirmDelId(inv.id)}
-                        className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/75 hover:bg-white/10"
-                        title="Delete invoice"
-                      >
-                        Delete
-                      </button>
-                    )
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={()=> alert('You do not have permission to delete invoices. Please contact your administrator.')}
-                      className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/60 cursor-not-allowed"
-                      title="No permission to delete invoices"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-                <button type="button" onClick={()=> setSelected(inv.order_id)} className="px-2 py-1 text-xs rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">View</button>
-              </div>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm text-white/85">
+            <thead className="text-xs text-white/70">
+              <tr className="border-t border-b border-white/10 bg-white/5">
+                <th className="px-3 py-2"></th>
+                <th className="text-left px-3 py-2">Invoice #</th>
+                <th className="text-left px-3 py-2">Customer</th>
+                <th className="text-left px-3 py-2">Issue</th>
+                <th className="text-left px-3 py-2">Due</th>
+                <th className="text-left px-3 py-2">Status</th>
+                <th className="text-right px-3 py-2">Grand Total</th>
+                <th className="text-right px-3 py-2">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(inv => (
+                <tr key={inv.id} id={`invoice-card-${inv.id}`} className={`border-t border-white/10 hover:bg-white/10 cursor-pointer ${focusInvoiceId===inv.id ? 'bg-white/10' : ''}`} onClick={()=> navigate(`/bo/invoices/${inv.id}`)}>
+                  <td className="px-3 py-2" onClick={(e)=> e.stopPropagation()}>
+                    <input type="checkbox" checked={selIds.has(inv.id)} onChange={()=> toggleSel(inv.id)} />
+                  </td>
+                  <td className="px-3 py-2">{inv.invoice_number || String(inv.id).slice(0,8)}</td>
+                  <td className="px-3 py-2">{inv.customer_name || '—'}</td>
+                  <td className="px-3 py-2">{inv.issue_date || (inv.issued_at ? new Date(inv.issued_at).toLocaleDateString() : '—')}</td>
+                  <td className="px-3 py-2">{inv.due_date || '—'}</td>
+                  <td className="px-3 py-2 capitalize">{inv.status}</td>
+                  <td className="px-3 py-2 text-right">{Number(inv?.totals?.grand_total ?? inv?.totals?.total ?? 0).toFixed(2)} {inv?.currency || ''}</td>
+                  <td className="px-3 py-2 text-right">{Number(inv?.totals?.balance_due ?? 0).toFixed(2)} {inv?.currency || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
