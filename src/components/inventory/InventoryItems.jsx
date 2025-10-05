@@ -6,6 +6,7 @@ export default function InventoryItems({
   stockByItem, 
   lastCostByItem, 
   receivedByItem, 
+  variantPriceByItem,
   onDeleteItem,
   onReceive,
   onAdjust,
@@ -57,10 +58,14 @@ export default function InventoryItems({
             const statusColor = left === 0 ? 'text-red-300' : (left < Number(received || 0) ? 'text-amber-300' : 'text-emerald-300');
             const curRaw = (lc?.currency ?? it.default_currency ?? '').toString();
             const curLabel = ['KWD','USD','SAR','AED','BHD','QAR','OMR'].includes(curRaw) ? codeToLabel(curRaw) : curRaw;
-            const sellCurCode = (it.sell_currency || it.default_currency || '').toString();
-            const sellDisplay = (it.sell_price != null && it.sell_price !== '') ? `${Number(it.sell_price).toFixed(2)} ${sellCurCode}` : '—';
-            const canProfit = (it.sell_price != null && it.sell_price !== '' && lc?.unit_cost != null && sellCurCode === (lc?.currency || it.default_currency || '').toString());
-            const profit = canProfit ? (Number(it.sell_price) - Number(cost)) : null;
+            // Prefer base sell price; if missing, fall back to variant current min price
+            const vSummary = variantPriceByItem?.get(it.id) || null;
+            const baseHasSell = (it.sell_price != null && it.sell_price !== '');
+            const sellPriceNum = baseHasSell ? Number(it.sell_price) : (vSummary && vSummary.price != null ? Number(vSummary.price) : null);
+            const sellCurCode = (baseHasSell ? (it.sell_currency || it.default_currency || '') : (vSummary?.currency || it.default_currency || '')).toString();
+            const sellDisplay = (sellPriceNum != null) ? `${sellPriceNum.toFixed(2)} ${sellCurCode}` : '—';
+            const canProfit = (sellPriceNum != null && lc?.unit_cost != null && sellCurCode === (lc?.currency || it.default_currency || '').toString());
+            const profit = canProfit ? (Number(sellPriceNum) - Number(cost)) : null;
             const margin = canProfit && Number(it.sell_price) !== 0 ? ((profit / Number(it.sell_price)) * 100) : null;
             const profitColor = canProfit ? (profit >= 0 ? 'text-emerald-300' : 'text-red-300') : 'text-white/85';
             
@@ -131,8 +136,11 @@ export default function InventoryItems({
             const lc = lastCostByItem.get(it.id);
             const cost = lc?.unit_cost;
             const costCur = (lc?.currency || it.default_currency || '').toString();
-            const sell = it.sell_price;
-            const sellCur = (it.sell_currency || it.default_currency || '').toString();
+            // Prefer base sell; fall back to variant min current price
+            const vSummary = variantPriceByItem?.get(it.id) || null;
+            const baseHasSell = (it.sell_price != null && it.sell_price !== '');
+            const sell = baseHasSell ? it.sell_price : (vSummary?.price ?? null);
+            const sellCur = (baseHasSell ? (it.sell_currency || it.default_currency || '') : (vSummary?.currency || it.default_currency || '')).toString();
             agg.onHand += onHand;
             // cost value
             if (cost != null && !isNaN(cost)) {
@@ -164,6 +172,33 @@ export default function InventoryItems({
               <span key={cur} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${cls} bg-white/5 border border-white/10`}>{Number(val).toFixed(2)} {cur}</span>
             ));
 
+          // Fallback helpers: show per-unit chips when totals are zero (e.g., On Hand = 0)
+          const buildPerUnitFallback = (catKey) => {
+            const itemsInCat = (items || []).filter(it => (it.category || 'Uncategorized') === catKey);
+            // pick first available sell and cost with currencies
+            let sellPU = null, sellCur = null, costPU = null, costCurPU = null, profitPU = null;
+            for (const it of itemsInCat) {
+              const lc = lastCostByItem.get(it.id);
+              const vSummary = variantPriceByItem?.get(it.id) || null;
+              const baseHasSell = (it.sell_price != null && it.sell_price !== '');
+              const s = baseHasSell ? Number(it.sell_price) : (vSummary?.price != null ? Number(vSummary.price) : null);
+              const sCur = (baseHasSell ? (it.sell_currency || it.default_currency || '') : (vSummary?.currency || it.default_currency || '')).toString();
+              const c = (lc?.unit_cost != null ? Number(lc.unit_cost) : null);
+              const cCur = (lc?.currency || it.default_currency || '').toString();
+              if (sellPU == null && s != null && !isNaN(s) && sCur) { sellPU = s; sellCur = sCur; }
+              if (costPU == null && c != null && !isNaN(c) && cCur) { costPU = c; costCurPU = cCur; }
+              if (sellPU != null && costPU != null) break;
+            }
+            if (sellPU != null && costPU != null && sellCur && costCurPU && sellCur === costCurPU) {
+              profitPU = sellPU - costPU;
+            }
+            return {
+              sellChip: (sellPU != null && sellCur) ? (<span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-emerald-300 bg-white/5 border border-white/10`}>{sellPU.toFixed(2)} {sellCur}</span>) : null,
+              costChip: (costPU != null && costCurPU) ? (<span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-sky-300 bg-white/5 border border-white/10`}>{costPU.toFixed(2)} {costCurPU}</span>) : null,
+              profitChip: (profitPU != null && sellCur) ? (<span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-emerald-300 bg-white/5 border border-white/10`}>{profitPU.toFixed(2)} {sellCur}</span>) : null,
+            };
+          };
+
           return (
             <tfoot>
               <tr className="border-t border-white/10 text-white/85 bg-white/5 align-top">
@@ -173,13 +208,38 @@ export default function InventoryItems({
                 <td className="py-2 pr-3"></td>
                 <td className="py-2 pr-3 font-medium">{agg.onHand.toFixed(0)}</td>
                 <td className="py-2 pr-3">
-                  <div className="flex flex-wrap gap-2">{renderCurChips(agg.costByCur, 'text-sky-300')}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(() => {
+                      const chips = renderCurChips(agg.costByCur, 'text-sky-300');
+                      if (chips.length > 0) return chips;
+                      // show per-unit fallback across all categories when totals are zero
+                      const anyCat = Object.keys(agg.byCat)[0];
+                      const fb = anyCat ? buildPerUnitFallback(anyCat) : {};
+                      return fb.costChip || null;
+                    })()}
+                  </div>
                 </td>
                 <td className="py-2 pr-3">
-                  <div className="flex flex-wrap gap-2">{renderCurChips(agg.sellByCur, 'text-emerald-300')}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(() => {
+                      const chips = renderCurChips(agg.sellByCur, 'text-emerald-300');
+                      if (chips.length > 0) return chips;
+                      const anyCat = Object.keys(agg.byCat)[0];
+                      const fb = anyCat ? buildPerUnitFallback(anyCat) : {};
+                      return fb.sellChip || null;
+                    })()}
+                  </div>
                 </td>
                 <td className="py-2 pr-3">
-                  <div className="flex flex-wrap gap-2">{renderCurChips(agg.profitByCur, 'text-emerald-300')}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(() => {
+                      const chips = renderCurChips(agg.profitByCur, 'text-emerald-300');
+                      if (chips.length > 0) return chips;
+                      const anyCat = Object.keys(agg.byCat)[0];
+                      const fb = anyCat ? buildPerUnitFallback(anyCat) : {};
+                      return fb.profitChip || null;
+                    })()}
+                  </div>
                 </td>
                 <td className="py-2 pr-3"></td>
                 <td className="py-2 pr-3"></td>

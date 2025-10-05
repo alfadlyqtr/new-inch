@@ -44,6 +44,10 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
   // Last cost for summary panel when editing
   const [lastCost, setLastCost] = useState(null);
   const [lastCostCur, setLastCostCur] = useState(null);
+  // Variants (for garment categories)
+  const GARMENT_CATS = ['thobe','sirwal','falina'];
+  const [variants, setVariants] = useState([]); // {id?, name, sku_suffix, active, price, price_currency}
+  const [variantsLoaded, setVariantsLoaded] = useState(false);
   // Initial stock (only for new items)
   const [isInitStockOn] = useState(true);
   const [initSupplier, setInitSupplier] = useState('');
@@ -80,10 +84,21 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
           setCurrency(invCur);
           // Keep sell currency aligned by default for new items
           setSellCurrency(invCur);
+          // Also default Initial Stock cost currency to the same selection
+          setInitCostCurrency(invCur);
         }
       } catch {}
     })();
   }, [open, initial?.id]);
+
+  // Keep Initial Stock cost currency in sync with Default Currency for NEW items
+  useEffect(() => {
+    if (!open) return;
+    if (initial?.id) return; // only new items
+    if (currency && typeof currency === 'string') {
+      setInitCostCurrency((prev) => currency);
+    }
+  }, [currency, open, initial?.id]);
 
   // When EDITING: hydrate all form fields from initial item when modal opens
   useEffect(() => {
@@ -107,7 +122,42 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
     setSellCurrency(uiSellCurrency);
     setSellPrice(typeof initial?.sell_price === 'number' ? initial.sell_price : (initial?.sell_price ? Number(initial.sell_price) : ''));
     setTouched({ sku: false, name: false });
+    // Reset variants when switching items
+    setVariants([]);
+    setVariantsLoaded(false);
   }, [open, initial?.id]);
+
+  // Load variants for garment categories when editing
+  useEffect(() => {
+    if (!open) return;
+    if (!initial?.id) return;
+    if (!GARMENT_CATS.includes((initial?.category || '').toLowerCase())) { setVariants([]); setVariantsLoaded(true); return; }
+    (async () => {
+      try {
+        const { data: vlist } = await supabase
+          .from('item_variants')
+          .select('id, name, sku_suffix, uom, active')
+          .eq('item_id', initial.id)
+          .order('created_at');
+        const { data: prices } = await supabase
+          .from('v_variant_current_price')
+          .select('variant_id, price, currency')
+          .eq('item_id', initial.id);
+        const priceByVar = new Map();
+        for (const p of prices || []) priceByVar.set(p.variant_id, p);
+        const rows = (vlist || []).map(v => ({
+          id: v.id,
+          name: v.name || '',
+          sku_suffix: v.sku_suffix || '',
+          active: v.active !== false,
+          price: priceByVar.get(v.id)?.price ?? '',
+          price_currency: codeToLabel(priceByVar.get(v.id)?.currency || labelToCode(currency))
+        }));
+        setVariants(rows);
+      } catch {}
+      finally { setVariantsLoaded(true); }
+    })();
+  }, [open, initial?.id, initial?.category, currency]);
 
   // Live-sync: update currency when Settings saves invoice changes, while modal is open for NEW items
   useEffect(() => {
@@ -157,6 +207,22 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
     })();
   }, [open, initial?.id]);
 
+  // While creating a NEW item, preview Summary using Initial Stock inputs
+  useEffect(() => {
+    if (!open) return;
+    if (initial?.id) return; // only for new items
+    // If user provided a unit cost and selected a currency, show it as last cost preview
+    const costNum = initUnitCost === '' ? null : Number(initUnitCost);
+    if (costNum != null && !Number.isNaN(costNum)) {
+      setLastCost(costNum);
+      // initCostCurrency is a label in UI; convert to code for comparison
+      setLastCostCur(labelToCode(initCostCurrency || currency));
+    } else {
+      setLastCost(null);
+      setLastCostCur(null);
+    }
+  }, [open, initial?.id, initUnitCost, initCostCurrency, currency]);
+
   if (!open) return null;
 
   const nameErr = name.trim().length === 0 ? 'Name is required' : '';
@@ -187,7 +253,9 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
           };
         }
       }
-      await onSaved?.({
+      // If garment category, we will save base item first without closing, then variants
+      const isGarment = GARMENT_CATS.includes((finalCategory || '').toLowerCase());
+      const savedItem = await onSaved?.({
         sku: sku.trim() || null,
         name: name.trim(),
         category: finalCategory,
@@ -197,7 +265,40 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
         sell_price: sellPrice === '' ? null : Number(sellPrice),
         sell_currency: sell_currency_code,
         initial_stock,
+        __skipClose: isGarment,
       }, initial?.id || null);
+
+      if (isGarment) {
+        const itemId = initial?.id || savedItem?.id;
+        if (itemId) {
+          // Upsert variants
+          for (const v of variants || []) {
+            // Ensure a name exists to persist
+            if (!v.name || !v.name.trim()) continue;
+            let variantId = v.id || null;
+            if (variantId) {
+              await supabase.from('item_variants').update({ name: v.name.trim(), sku_suffix: v.sku_suffix || null, active: v.active !== false }).eq('id', variantId);
+            } else {
+              const { data: createdVar } = await supabase
+                .from('item_variants')
+                .insert([{ item_id: itemId, name: v.name.trim(), sku_suffix: v.sku_suffix || null, active: v.active !== false }])
+                .select('id')
+                .single();
+              variantId = createdVar?.id || null;
+            }
+            // Price handling: if price is provided, end current and insert new as current
+            if (variantId && v.price !== '' && v.price != null) {
+              const curCode = labelToCode(v.price_currency || currency);
+              // end current
+              await supabase.from('item_variant_prices').update({ effective_to: new Date().toISOString() }).eq('variant_id', variantId).is('effective_to', null);
+              // insert new current
+              await supabase.from('item_variant_prices').insert([{ variant_id: variantId, price: Number(v.price) || 0, currency: curCode }]);
+            }
+          }
+        }
+        // Close after variant save
+        onClose?.();
+      }
     } finally {
       setSaving(false);
     }
@@ -261,7 +362,7 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
                     setCategory(e.target.value); setCategoryText(e.target.value);
                   }} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
                   <option value="">—</option>
-                  {['fabric','thread','button','zipper','interfacing','packaging','accessory','other'].map(c => <option key={c} value={c}>{c}</option>)}
+                  {['fabric','thread','button','zipper','interfacing','packaging','accessory','thobe','falina','sirwal','other'].map(c => <option key={c} value={c}>{c}</option>)}
                   <option value="__custom__">Custom…</option>
                 </select>
               )}
@@ -295,6 +396,48 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
               </select>
             </div>
           </div>
+
+          {/* Variant Editor for garment categories */}
+          {GARMENT_CATS.includes((categoryCustom ? (categoryText||'') : (category||'')).toLowerCase()) && (
+            <div className="mt-2 p-3 rounded-lg bg-white/5 border border-white/10">
+              <div className="text-white/80 text-sm font-medium mb-2">Variants</div>
+              <div className="space-y-2">
+                {(variants || []).map((v, idx) => (
+                  <div key={v.id || idx} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+                    <div className="md:col-span-2">
+                      <label className="block text-white/70 mb-1">Name</label>
+                      <input value={v.name||''} onChange={(e)=> setVariants(arr => arr.map((x,i)=> i===idx?{...x, name:e.target.value}:x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. Basic" />
+                    </div>
+                    <div>
+                      <label className="block text-white/70 mb-1">SKU Suffix</label>
+                      <input value={v.sku_suffix||''} onChange={(e)=> setVariants(arr => arr.map((x,i)=> i===idx?{...x, sku_suffix:e.target.value}:x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. BSC" />
+                    </div>
+                    <div>
+                      <label className="block text-white/70 mb-1">Price</label>
+                      <input type="number" step="0.01" value={v.price===0?0:(v.price||'')} onChange={(e)=> setVariants(arr => arr.map((x,i)=> i===idx?{...x, price:e.target.value}:x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 120" />
+                    </div>
+                    <div>
+                      <label className="block text-white/70 mb-1">Currency</label>
+                      <select value={v.price_currency || currency} onChange={(e)=> setVariants(arr => arr.map((x,i)=> i===idx?{...x, price_currency:e.target.value}:x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                        {CURRENCIES.map(c => (<option key={c.code} value={c.label}>{c.label}</option>))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="block text-white/70 mb-1">Active</label>
+                      <input type="checkbox" checked={v.active !== false} onChange={(e)=> setVariants(arr => arr.map((x,i)=> i===idx?{...x, active:e.target.checked}:x))} />
+                    </div>
+                    <div className="flex items-center">
+                      <button type="button" onClick={()=> setVariants(arr => arr.filter((_,i)=> i!==idx))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">Remove</button>
+                    </div>
+                  </div>
+                ))}
+                <div>
+                  <button type="button" onClick={()=> setVariants(arr => ([...arr, { name:'', sku_suffix:'', active:true, price:'', price_currency: currency }]))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">+ Add variant</button>
+                  {!variantsLoaded && <span className="ml-2 text-xs text-white/60">Loading existing variants…</span>}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Initial Stock - only for new items */}
           {!initial?.id && (

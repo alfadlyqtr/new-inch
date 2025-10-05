@@ -33,6 +33,8 @@ export default function Inventory() {
   const [items, setItems] = useState([]);
   const [stock, setStock] = useState([]);
   const [lastCost, setLastCost] = useState([]);
+  // Variant current price summary per item_id (min price)
+  const [variantPriceByItem, setVariantPriceByItem] = useState(new Map());
   const [locations, setLocations] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [receipts, setReceipts] = useState([]);
@@ -54,6 +56,12 @@ export default function Inventory() {
   const [editItem, setEditItem] = useState(null);
   // Price Book notices
   const [pbNotice, setPbNotice] = useState('');
+  // Pricing grid (DB-backed)
+  const [pricingRows, setPricingRows] = useState([]);
+  const [pricingLoadingGrid, setPricingLoadingGrid] = useState(false);
+  const [pricingFilter, setPricingFilter] = useState('all'); // all|variants|items
+  const [batchPrice, setBatchPrice] = useState('');
+  const [batchCurrency, setBatchCurrency] = useState('SAR');
   // Walk-in fabric default unit price (for Price Book)
   const [walkInDefaultUnit, setWalkInDefaultUnit] = useState(0);
   // Receive / Adjust modals
@@ -73,19 +81,147 @@ export default function Inventory() {
       const { data: sess } = await supabase.auth.getSession();
       const user = sess?.session?.user;
       if (!user) return;
-      
       const { data: ua } = await supabase
         .from('users_app')
         .select('id, business_id')
         .eq('auth_user_id', user.id)
         .maybeSingle();
-        
       if (ua?.business_id) {
         setIds({ business_id: ua.business_id, user_id: user.id, users_app_id: ua.id });
       }
     };
+
+  // Open item editor from pricing row
+  const handlePricingEdit = (row) => {
+    const it = itemsById.get(row.item_id);
+    if (it) openEdit(it);
+  };
+
+  // Delete from pricing row: if variant -> deactivate/delete variant; else -> delete item
+  const handlePricingDelete = async (row) => {
+    try {
+      if (row.is_variant && row.variant_id) {
+        if (!window.confirm(`Delete variant ${row.variant_name || ''}?`)) return;
+        // Prefer soft delete via active=false; if column not present, do hard delete
+        const { error: updErr } = await supabase
+          .from('item_variants')
+          .update({ active: false })
+          .eq('id', row.variant_id);
+        if (updErr) {
+          // fallback hard delete
+          await supabase.from('item_variants').delete().eq('id', row.variant_id);
+        }
+        await loadPricingRows();
+        setPbNotice('Variant removed');
+        setTimeout(()=> setPbNotice(''), 1500);
+      } else {
+        const it = itemsById.get(row.item_id);
+        if (it) await handleDeleteItem(it);
+      }
+    } catch (e) {
+      console.error('pricing delete failed', e);
+      setPbNotice(e?.message || 'Failed to delete');
+      setTimeout(()=> setPbNotice(''), 2500);
+    }
+  };
     fetchSession();
   }, []);
+
+  // Load consolidated pricing rows (items + variants current price)
+  const loadPricingRows = async () => {
+    if (!ids.business_id) return;
+    setPricingLoadingGrid(true);
+    try {
+      const { data, error } = await supabase
+        .from('v_items_with_current_prices')
+        .select('*')
+        .eq('business_id', ids.business_id)
+        .order('item_name', { ascending: true });
+      if (error) throw error;
+      // Apply local filter after load
+      const rows = data || [];
+      setPricingRows(rows);
+    } catch (e) {
+      console.error('loadPricingRows failed', e);
+      setPricingRows([]);
+    } finally { setPricingLoadingGrid(false); }
+  };
+
+  // Refresh pricing grid when entering Pricing tab or business switches
+  useEffect(() => {
+    if (tab !== TABS.PRICING) return;
+    loadPricingRows();
+  }, [tab, ids.business_id]);
+
+  // Save a price change inline from the grid
+  const handleSavePriceInline = async (row, priceValue, currencyLabel) => {
+    try {
+      const priceNum = priceValue === '' ? null : Number(priceValue);
+      const curCode = labelToCode(currencyLabel);
+      if (row.is_variant && row.variant_id) {
+        // End current, insert new current
+        await supabase
+          .from('item_variant_prices')
+          .update({ effective_to: new Date().toISOString() })
+          .eq('variant_id', row.variant_id)
+          .is('effective_to', null);
+        if (priceNum != null) {
+          await supabase
+            .from('item_variant_prices')
+            .insert([{ variant_id: row.variant_id, price: priceNum, currency: curCode }]);
+        }
+      } else {
+        // Non-garments: write to inventory_items.sell_price/sell_currency
+        await supabase
+          .from('inventory_items')
+          .update({ sell_price: priceNum, sell_currency: curCode })
+          .eq('id', row.item_id);
+      }
+      await loadPricingRows();
+      setPbNotice('Price saved');
+      setTimeout(() => setPbNotice(''), 1500);
+    } catch (e) {
+      console.error('inline price save failed', e);
+      setPbNotice(e?.message || 'Failed to save');
+      setTimeout(() => setPbNotice(''), 2500);
+    }
+  };
+
+  // Batch apply a single price/currency to all currently visible variants in the grid
+  const handleApplyPriceToVisibleVariants = async () => {
+    try {
+      const curCode = batchCurrency; // batchCurrency is stored as code (e.g., 'QAR')
+      const priceNum = batchPrice === '' ? null : Number(batchPrice);
+      const target = (pricingRows || []).filter(r => (
+        (pricingFilter === 'variants' ? r.is_variant : (pricingFilter === 'items' ? !r.is_variant : true))
+      ) && r.is_variant && r.variant_id);
+
+      // End current prices for targets
+      for (const r of target) {
+        await supabase
+          .from('item_variant_prices')
+          .update({ effective_to: new Date().toISOString() })
+          .eq('variant_id', r.variant_id)
+          .is('effective_to', null);
+      }
+      // Insert new prices
+      if (priceNum != null) {
+        const inserts = target.map(r => ({ variant_id: r.variant_id, price: priceNum, currency: curCode }));
+        const chunkSize = 100;
+        for (let i = 0; i < inserts.length; i += chunkSize) {
+          const chunk = inserts.slice(i, i + chunkSize);
+          if (chunk.length > 0) await supabase.from('item_variant_prices').insert(chunk);
+        }
+      }
+      await loadPricingRows();
+      setPbNotice('Applied to visible variants');
+      setTimeout(() => setPbNotice(''), 1500);
+    } catch (e) {
+      console.error('batch apply failed', e);
+      setPbNotice(e?.message || 'Failed to apply');
+      setTimeout(() => setPbNotice(''), 2500);
+    }
+  };
 
   // --- Price Book helpers (component scope) ---
   const buildPriceBookContent = () => {
@@ -175,7 +311,8 @@ export default function Inventory() {
           { data: locs },
           { data: sups },
           { data: rec },
-          { data: us }
+          { data: us },
+          { data: hints }
         ] = await Promise.all([
           supabase
             .from('inventory_items')
@@ -214,12 +351,26 @@ export default function Inventory() {
               .eq('user_id', ids.users_app_id)
               .maybeSingle();
             return data || null;
-          })()
+          })(),
+          supabase
+            .from('item_cost_hints')
+            .select('item_id, unit_cost, currency')
+            .eq('business_id', ids.business_id)
         ]);
         
         setItems(it || []);
         setStock(st || []);
-        setLastCost(lc || []);
+        // Merge true last cost with hints (only when missing)
+        try {
+          const byItem = new Map();
+          for (const r of (lc || [])) byItem.set(r.item_id, r);
+          for (const h of (hints || [])) {
+            if (!byItem.has(h.item_id)) byItem.set(h.item_id, h);
+          }
+          setLastCost(Array.from(byItem.values()));
+        } catch {
+          setLastCost(lc || []);
+        }
         setLocations(locs || []);
         setSuppliers(sups || []);
         setReceipts(rec || []);
@@ -230,6 +381,8 @@ export default function Inventory() {
           // Always keep these states as labels to match Settings dropdowns
           const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR')
           setPricingCurrency(invCurLabel);
+          // Ensure batch currency defaults to Settings invoice currency
+          setBatchCurrency(labelToCode(invCurLabel));
           const pSell = ps?.default_sell_currency || 'SAR'
           setDefaultSellCurrency(CURRENCIES.some(c => c.label === pSell) ? pSell : codeToLabel(pSell));
           setPriceThobe(ps?.thobe_price ?? '');
@@ -239,6 +392,27 @@ export default function Inventory() {
           setPromotions(Array.isArray(ps?.promotions) ? ps.promotions : []);
           setGarments(Array.isArray(ps?.garments) ? ps.garments : []);
           setPricingLoaded(true);
+        } catch {}
+
+        // Load current variant prices for items (min price per item for garments)
+        try {
+          const itemIds = (it || []).map(x => x.id).filter(Boolean);
+          if (itemIds.length > 0) {
+            const { data: vp } = await supabase
+              .from('v_variant_current_price')
+              .select('item_id, price, currency')
+              .in('item_id', itemIds);
+            const map = new Map();
+            for (const row of (vp || [])) {
+              const prev = map.get(row.item_id);
+              if (!prev || (row.price != null && Number(row.price) < Number(prev.price))) {
+                map.set(row.item_id, { price: Number(row.price), currency: row.currency });
+              }
+            }
+            setVariantPriceByItem(map);
+          } else {
+            setVariantPriceByItem(new Map());
+          }
         } catch {}
       } catch (error) {
         console.error('Error fetching inventory data:', error);
@@ -264,6 +438,7 @@ export default function Inventory() {
         const inv = data?.invoice_settings || {};
         const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR');
         setPricingCurrency(invCurLabel);
+        setBatchCurrency(labelToCode(invCurLabel));
         setPriceThobe(ps?.thobe_price ?? '');
         setPriceSirwal(ps?.sirwal_price ?? '');
         setPriceFalina(ps?.falina_price ?? '');
@@ -280,6 +455,7 @@ export default function Inventory() {
       const cur = e?.detail?.currency;
       if (typeof cur === 'string' && cur) {
         setPricingCurrency(cur);
+        setBatchCurrency(labelToCode(cur));
       }
     };
     window.addEventListener('invoice-settings-updated', onUpdated);
@@ -290,6 +466,7 @@ export default function Inventory() {
       bc.onmessage = (m) => {
         if (m?.data?.type === 'invoice-settings-updated' && typeof m?.data?.currency === 'string') {
           setPricingCurrency(m.data.currency);
+          setBatchCurrency(labelToCode(m.data.currency));
         }
       };
     } catch {}
@@ -327,6 +504,13 @@ export default function Inventory() {
     }
     return map;
   }, [receipts]);
+
+  // Quick lookup for items by id (used by Pricing grid actions)
+  const itemsById = useMemo(() => {
+    const m = new Map();
+    for (const it of items || []) m.set(it.id, it);
+    return m;
+  }, [items]);
 
   const filteredItems = useMemo(() => {
     const qq = q.trim().toLowerCase();
@@ -420,25 +604,31 @@ export default function Inventory() {
   const handleItemSaved = async (data, itemId = null) => {
     try {
       if (!ids.business_id) throw new Error('Missing business_id');
+      const skipClose = !!data?.__skipClose;
+      // Remove helper-only fields that don't belong to inventory_items
+      const clean = (() => { const { __skipClose, initial_stock, ...rest } = data || {}; return rest; })();
       if (itemId) {
         const { data: updated, error } = await supabase
           .from('inventory_items')
-          .update(data)
+          .update(clean)
           .eq('id', itemId)
           .select('*')
           .single();
         if (error) throw error;
         setItems(prev => prev.map(it => it.id === itemId ? updated : it));
+        if (!skipClose) setAddOpen(false);
+        return updated?.id || itemId;
       } else {
         const { data: created, error } = await supabase
           .from('inventory_items')
-          .insert([{ ...data, business_id: ids.business_id }])
+          .insert([{ ...clean, business_id: ids.business_id }])
           .select('*')
           .single();
         if (error) throw error;
         setItems(prev => [...prev, created]);
+        if (!skipClose) setAddOpen(false);
+        return created?.id;
       }
-      setAddOpen(false);
     } catch (e) {
       console.error('Error saving item:', e);
       alert(e?.message || 'Failed to save item');
@@ -512,6 +702,13 @@ export default function Inventory() {
         const others = (prev || []).filter(r => r.item_id !== receiveItem.id);
         return [{ item_id: receiveItem.id, unit_cost: Number(unit_cost) || 0, currency: payload.currency, business_id: ids.business_id }, ...others];
       });
+      // Remove any hint for this item now that we have a real receipt
+      try {
+        await supabase.from('item_cost_hints')
+          .delete()
+          .eq('business_id', ids.business_id)
+          .eq('item_id', receiveItem.id);
+      } catch {}
       setReceiveOpen(false); setReceiveItem(null);
     } catch (e) {
       console.error('receive save failed', e);
@@ -658,6 +855,7 @@ export default function Inventory() {
               stockByItem={stockByItem}
               lastCostByItem={lastCostByItem}
               receivedByItem={receivedByItem}
+              variantPriceByItem={variantPriceByItem}
               onDeleteItem={handleDeleteItem}
               onReceive={openReceive}
               onAdjust={openAdjust}
@@ -685,171 +883,67 @@ export default function Inventory() {
         {tab === TABS.PRICING && (
           <div className="text-white/90 space-y-4">
             <div className="text-lg font-semibold">Pricing Management</div>
-            <div className="text-white/70 text-sm">Defaults applied to new Orders and as presets in Inventory.</div>
-            {/* Toolbar: all actions in one line */}
-            <div className="flex flex-wrap items-center justify-between md:justify-end gap-2">
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={()=> setGarments(gs => ([...gs, { name: '', price: '' }]))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">+ Add garment</button>
-                <button type="button" onClick={() => setPromotions(p => ([...p, { code: '', type: 'percent', amount: '', active: true, valid_from: '', valid_to: '', min_order: '' }]))} className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white/80 hover:bg-white/15">+ Add promo</button>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    if (!ids.users_app_id) return;
-                    try {
-                      setPricingNotice('');
-                      const payload = {
-                        pricing_settings: {
-                          // currency values come only from Settings (Invoice). Save pricing numbers only here.
-                          inventory_markup_pct: Number(markupPct) || 0,
-                          thobe_price: priceThobe === '' ? null : Number(priceThobe),
-                          sirwal_price: priceSirwal === '' ? null : Number(priceSirwal),
-                          falina_price: priceFalina === '' ? null : Number(priceFalina),
-                          garments: garments.map(g => ({ name: (g.name || '').trim(), price: g.price === '' ? null : Number(g.price) })).filter(g => g.name),
-                          promotions: promotions.map(p => ({
-                            code: (p.code || '').toUpperCase().trim(),
-                            type: p.type === 'fixed' ? 'fixed' : 'percent',
-                            amount: p.amount === '' ? null : Number(p.amount),
-                            min_order: p.min_order === '' ? null : Number(p.min_order),
-                            valid_from: p.valid_from || null,
-                            valid_to: p.valid_to || null,
-                            active: !!p.active,
-                          })),
-                        }
-                      };
-                      const { error } = await supabase
-                        .from('user_settings')
-                        .upsert({ user_id: ids.users_app_id, ...payload }, { onConflict: 'user_id' });
-                      if (error) throw error;
-                      setPricingNotice('Pricing defaults saved');
-                      setTimeout(()=> setPricingNotice(''), 2000);
-                    } catch (e) {
-                      setPricingNotice(e?.message || 'Failed to save');
-                      setTimeout(()=> setPricingNotice(''), 2500);
-                    }
-                  }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
-                >
-                  Save Pricing
-                </button>
-                <button onClick={savePriceBookDraft} className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg border border-white/15 transition-colors" title="Save Price Book (Draft)">Save Price Book (Draft)</button>
-                <button onClick={activateLatestDraft} className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition-colors" title="Activate latest draft">Activate Draft</button>
-                {pbNotice && <div className="text-xs text-slate-300 ml-2">{pbNotice}</div>}
-              </div>
+            <div className="text-white/70 text-sm">Manage prices for all items and garment variants. Currency comes from Settings → Invoice.</div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-slate-300">{pbNotice}</div>
+              <div className="text-xs text-slate-400">{pricingLoadingGrid ? 'Loading…' : ''}</div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-white/70 mb-1">Default Currency</label>
-                <select disabled value={pricingCurrency || ''} onChange={()=>{}} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
-                  {CURRENCIES.map(c => (
-                    <option key={c.code} value={c.label}>{c.label}</option>
-                  ))}
+            <div className="flex items-center gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <label className="text-white/70">Filter:</label>
+                <select value={pricingFilter} onChange={(e)=> setPricingFilter(e.target.value)} className="rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
+                  <option value="all">All</option>
+                  <option value="variants">Variants</option>
+                  <option value="items">Items (non-garments)</option>
                 </select>
-                <div className="text-[11px] text-white/50 mt-1">Change currency in Settings → Invoice.</div>
               </div>
-              {/* Default Sell Currency is managed in Settings only */}
-              <div>
-                <label className="block text-white/70 mb-1">Default Markup (%)</label>
-                <input type="number" value={markupPct} onChange={(e)=> setMarkupPct(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 25" />
-              </div>
-              <div>
-                <label className="block text-white/70 mb-1">Walk‑in Fabric Default Unit Price</label>
-                <input type="number" step="0.01" value={walkInDefaultUnit} onChange={(e)=> setWalkInDefaultUnit(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="0" />
-                <div className="text-[11px] text-white/50 mt-1">This is used as the starting unit price for walk‑in fabric on invoices.</div>
+              <div className="flex items-center gap-2">
+                <label className="text-white/70">Batch price for visible variants:</label>
+                <input type="number" step="0.01" value={batchPrice} onChange={(e)=> setBatchPrice(e.target.value)} placeholder="e.g. 120" className="w-28 rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+                <select value={codeToLabel(batchCurrency)} onChange={(e)=> setBatchCurrency(labelToCode(e.target.value))} className="w-64 rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
+                  {CURRENCIES.map(c => (<option key={c.code} value={c.label}>{c.label}</option>))}
+                </select>
+                <button className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleApplyPriceToVisibleVariants}>Apply</button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-white/70 mb-1">Thobe Price</label>
-                <input type="number" value={priceThobe} onChange={(e)=> setPriceThobe(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 120" />
-              </div>
-              <div>
-                <label className="block text-white/70 mb-1">Sirwal Price</label>
-                <input type="number" value={priceSirwal} onChange={(e)=> setPriceSirwal(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 60" />
-              </div>
-              <div>
-                <label className="block text-white/70 mb-1">Falina Price</label>
-                <input type="number" value={priceFalina} onChange={(e)=> setPriceFalina(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 60" />
-              </div>
-            </div>
-            {/* Extra garments with default prices */}
-            <div className="mt-2">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-white/85 font-medium">Additional Garments</div>
-              </div>
-              {garments.length === 0 ? (
-                <div className="text-white/60 text-sm">No additional garments.</div>
-              ) : (
-                <div className="space-y-2">
-                  {garments.map((g, idx) => (
-                    <div key={idx} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end p-3 rounded-lg bg-white/5 border border-white/10">
-                      <div className="md:col-span-3">
-                        <label className="block text-white/70 mb-1">Garment name</label>
-                        <input value={g.name} onChange={(e)=> setGarments(arr => arr.map((x,i)=> i===idx ? { ...x, name: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. Abaya" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-white/70 mb-1">Default price</label>
-                        <input type="number" value={g.price} onChange={(e)=> setGarments(arr => arr.map((x,i)=> i===idx ? { ...x, price: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 180" />
-                      </div>
-                      <div className="md:col-span-1 flex items-end justify-end">
-                        <button type="button" onClick={()=> setGarments(arr => arr.filter((_,i)=> i!==idx))} className="text-xs text-red-300 hover:text-red-200">Remove</button>
-                      </div>
-                    </div>
+            <div className="overflow-auto rounded-lg border border-white/10">
+              <table className="min-w-full text-sm">
+                <thead className="bg-white/5">
+                  <tr className="text-left text-white/70">
+                    <th className="py-2 px-3">SKU</th>
+                    <th className="py-2 px-3">Item</th>
+                    <th className="py-2 px-3">Category</th>
+                    <th className="py-2 px-3">Variant</th>
+                    <th className="py-2 px-3">Price</th>
+                    <th className="py-2 px-3">Currency</th>
+                    <th className="py-2 px-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(pricingRows||[]).filter(r => (pricingFilter === 'variants' ? r.is_variant : pricingFilter === 'items' ? !r.is_variant : true)).map((r) => (
+                    <tr key={`${r.item_id}-${r.variant_id||'base'}`} className="border-t border-white/10 text-white/85">
+                      <td className="py-2 px-3">{r.sku || '—'}</td>
+                      <td className="py-2 px-3">{r.item_name}</td>
+                      <td className="py-2 px-3 capitalize">{r.category || '—'}</td>
+                      <td className="py-2 px-3">{r.is_variant ? (r.variant_name || '—') : '—'}</td>
+                      <td className="py-2 px-3">
+                        <input type="number" step="0.01" defaultValue={r.price ?? ''} onBlur={(e)=> handleSavePriceInline(r, e.target.value, codeToLabel(r.currency))} className="w-32 rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
+                      </td>
+                      <td className="py-2 px-3">
+                        <select defaultValue={codeToLabel(r.currency)} onChange={(e)=> handleSavePriceInline(r, (document.activeElement && document.activeElement.type==='number') ? document.activeElement.value : (r.price ?? ''), e.target.value)} className="w-64 rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
+                          {CURRENCIES.map(c => (<option key={c.code} value={c.label}>{c.label}</option>))}
+                        </select>
+                      </td>
+                      <td className="py-2 px-3 space-x-2">
+                        <button className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white" onClick={()=> handlePricingEdit(r)}>Edit</button>
+                        <button className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=> handleSavePriceInline(r, r.price ?? '', codeToLabel(r.currency))}>Save</button>
+                        <button className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white" onClick={()=> handlePricingDelete(r)}>Delete</button>
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
-            {/* Discounts & Promo Codes (moved into Pricing tab) */}
-            <div className="mt-2">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-white/85 font-medium">Discounts & Promo Codes</div>
-              </div>
-              {promotions.length === 0 ? (
-                <div className="text-white/60 text-sm">No promos yet.</div>
-              ) : (
-                <div className="space-y-3">
-                  {promotions.map((pr, idx) => (
-                    <div key={idx} className="p-3 rounded-lg bg-white/5 border border-white/10">
-                      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
-                        <div>
-                          <label className="block text-white/70 mb-1">Code</label>
-                          <input value={pr.code} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, code: e.target.value.toUpperCase() } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white uppercase" placeholder="e.g. SAVE10" />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 mb-1">Type</label>
-                          <select value={pr.type} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, type: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
-                            <option value="percent">Percent %</option>
-                            <option value="fixed">Fixed</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-white/70 mb-1">Amount</label>
-                          <input type="number" value={pr.amount} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, amount: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder={pr.type==='percent' ? 'e.g. 10' : 'e.g. 20'} />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 mb-1">Min order</label>
-                          <input type="number" value={pr.min_order || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, min_order: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="optional" />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 mb-1">Valid from</label>
-                          <input type="date" value={pr.valid_from || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, valid_from: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
-                        </div>
-                        <div>
-                          <label className="block text-white/70 mb-1">Valid to</label>
-                          <input type="date" value={pr.valid_to || ''} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, valid_to: e.target.value } : x))} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" />
-                        </div>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between">
-                        <label className="inline-flex items-center gap-2 text-white/80"><input type="checkbox" checked={!!pr.active} onChange={(e)=> setPromotions(arr => arr.map((x,i)=> i===idx ? { ...x, active: !!e.target.checked } : x))} /> Active</label>
-                        <button type="button" onClick={()=> setPromotions(arr => arr.filter((_,i)=> i!==idx))} className="text-xs text-red-300 hover:text-red-200">Remove</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* Notice area below toolbar */}
-            {pricingNotice && (<div className="text-xs text-emerald-300">{pricingNotice}</div>)}
           </div>
         )}
       </div>
@@ -864,21 +958,53 @@ export default function Inventory() {
         try {
           if (!itemId && data?.initial_stock && savedId && ids.business_id && ids.user_id) {
             const is = data.initial_stock;
-            await supabase.from('inventory_transactions').insert({
-              business_id: ids.business_id,
-              item_id: savedId,
-              type: 'receipt',
-              qty: is.qty,
-              uom: items.find(i => i.id === savedId)?.uom_base || data.uom_base || 'pcs',
-              unit_cost: is.unit_cost,
-              currency: is.currency,
-              location_id: is.location_id,
-              supplier_id: is.supplier_id || null,
-              created_by: ids.user_id,
-              created_at: is.date ? new Date(is.date).toISOString() : new Date().toISOString(),
-            });
-            // Best-effort refresh of aggregates (stock/last cost)
-            try { await loadInventoryData?.(); } catch {}
+            if (Number(is.qty) > 0 && is.location_id) {
+              await supabase.from('inventory_transactions').insert({
+                business_id: ids.business_id,
+                item_id: savedId,
+                type: 'receipt',
+                qty: is.qty,
+                uom: items.find(i => i.id === savedId)?.uom_base || data.uom_base || 'pcs',
+                unit_cost: is.unit_cost,
+                currency: is.currency,
+                location_id: is.location_id,
+                supplier_id: is.supplier_id || null,
+                created_by: ids.user_id,
+                created_at: is.date ? new Date(is.date).toISOString() : new Date().toISOString(),
+              });
+              // Best-effort refresh of aggregates (stock/last cost)
+              try { await loadInventoryData?.(); } catch {}
+              // Optimistically reflect last cost for this item
+              setLastCost(prev => {
+                const next = Array.isArray(prev) ? [...prev] : [];
+                const existingIdx = next.findIndex(r => r.item_id === savedId);
+                const row = { item_id: savedId, unit_cost: Number(is.unit_cost), currency: is.currency };
+                if (existingIdx >= 0) next[existingIdx] = row; else next.push(row);
+                return next;
+              });
+              // Remove any stale cost hint now that we have a real receipt
+              try {
+                await supabase.from('item_cost_hints')
+                  .delete()
+                  .eq('business_id', ids.business_id)
+                  .eq('item_id', savedId);
+              } catch {}
+            } else {
+              // No receipt created (missing qty/location). Still reflect last cost hint immediately in UI.
+              setLastCost(prev => {
+                const next = Array.isArray(prev) ? [...prev] : [];
+                // Represent as objects like v_item_last_cost rows
+                const existingIdx = next.findIndex(r => r.item_id === savedId);
+                const row = { item_id: savedId, unit_cost: Number(is.unit_cost), currency: is.currency };
+                if (existingIdx >= 0) next[existingIdx] = row; else next.push(row);
+                return next;
+              });
+              // Persist a cost hint so it survives reloads
+              try {
+                await supabase.from('item_cost_hints')
+                  .upsert({ business_id: ids.business_id, item_id: savedId, unit_cost: Number(is.unit_cost), currency: is.currency }, { onConflict: 'item_id' });
+              } catch {}
+            }
           }
         } catch (e) {
           console.error('Failed to create initial receipt:', e);
