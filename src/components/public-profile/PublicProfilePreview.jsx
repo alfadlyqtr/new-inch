@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from "react"
 import { supabase } from "../../lib/supabaseClient.js"
+import PublicOrderAssistant from "./PublicOrderAssistant.jsx"
 
 export default function PublicProfilePreview({ business }) {
   const settings = business?.public_profile_settings || {}
@@ -311,7 +312,7 @@ export default function PublicProfilePreview({ business }) {
   }
 
   return (
-    <div className="rounded-xl overflow-hidden" style={rootStyle}>
+    <div className="rounded-xl overflow-hidden relative" style={rootStyle}>
       {sectionOrder.map((sec) => {
         if (visible[sec] === false) return null
         switch (sec) {
@@ -467,6 +468,8 @@ export default function PublicProfilePreview({ business }) {
             return null
         }
       })}
+      {/* Chatbot */}
+      <PublicOrderAssistant business={business} />
     </div>
   )
 }

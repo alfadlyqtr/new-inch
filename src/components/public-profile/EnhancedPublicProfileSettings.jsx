@@ -31,6 +31,47 @@ function deepMerge(target, source) {
   return out
 }
 
+function ChatbotSettings({ data, onUpdate }) {
+  const cfg = data.chatbot || {}
+  const enabled = !!cfg.enabled
+  const greeting = cfg.greeting || 'Hi! Enter your phone and order code to check your order status.'
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-white/90 font-medium">Order Assistant</div>
+          <div className="text-sm text-slate-400">Show a small assistant on your public page so customers can check order status using Phone + Order Code.</div>
+        </div>
+        <Switch checked={enabled} onCheckedChange={(v)=> onUpdate({ chatbot: { ...(data.chatbot||{}), enabled: v, mode: 'phone_order' } })} label={enabled ? 'Enabled' : 'Disabled'} />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label className="block space-y-1.5">
+          <span className="text-sm text-white/80">Greeting</span>
+          <input
+            value={greeting}
+            onChange={(e)=> onUpdate({ chatbot: { ...(data.chatbot||{}), greeting: e.target.value } })}
+            className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white placeholder:text-white/40"
+            placeholder="Welcome! Enter your phone and order code…"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm text-white/80">Verification Mode</span>
+          <select
+            value={(cfg.mode || 'phone_order')}
+            onChange={(e)=> onUpdate({ chatbot: { ...(data.chatbot||{}), mode: e.target.value } })}
+            className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-white"
+          >
+            <option value="phone_order">Phone + Order Code (recommended)</option>
+          </select>
+        </label>
+      </div>
+      <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-xs text-slate-300">
+        The assistant only shows on your public page when enabled. It verifies by phone number and order code, and shows basic status and due date.
+      </div>
+    </div>
+  )
+}
+
 // Immutable, URL-safe slug derived from business name
 function slugifyName(name) {
   return String(name || '')
@@ -392,6 +433,9 @@ export default function EnhancedPublicProfileSettings() {
           tabs={[
             { label: 'Basic Info', value: 'basic', content: (
               <BasicInfoTab data={profileData} onUpdate={onUpdate} logoUrl={logoUrl} />
+            )},
+            { label: 'Assist', value: 'assist', content: (
+              <ChatbotSettings data={profileData} onUpdate={onUpdate} />
             )},
             { label: 'Services', value: 'services', content: (
               <ServicesSection value={profileData.services} onChange={(v) => onUpdate({ services: v })} />
