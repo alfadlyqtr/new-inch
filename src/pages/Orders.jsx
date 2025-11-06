@@ -69,6 +69,17 @@ export default function Orders() {
     } catch { return JSON.stringify(obj||{}) }
   }
 
+  // Open JobCards page with this order/customer prefilled
+  function openJobCardForOrder(o){
+    try {
+      if (!o?.id) return
+      const params = new URLSearchParams()
+      params.set('orderId', o.id)
+      if (o.customer_id) params.set('customerId', o.customer_id)
+      navigate(`/bo/job-cards?${params.toString()}`)
+    } catch {}
+  }
+
   // Simple one-click create/open invoice for an order (frontend only)
   async function createOrOpenInvoice(o){
     try {
@@ -820,12 +831,41 @@ export default function Orders() {
 
   const filteredOrders = useMemo(() => {
     if (!search) return orders
-    const q = search.toLowerCase()
-    return orders.filter(o => (
-      (o.notes || '').toLowerCase().includes(q) ||
-      (o.status || '').toLowerCase().includes(q)
-    ))
-  }, [orders, search])
+    const raw = String(search || '')
+    const q = raw.toLowerCase().trim()
+    const qAlnum = q.replace(/[^a-z0-9]/g, '')
+    const qDigits = raw.replace(/[^0-9]/g, '')
+    return (orders || []).filter(o => {
+      const notes = String(o?.notes || '').toLowerCase()
+      const status = String(o?.status || '').toLowerCase()
+      const name = String(o?.customer_name || '').toLowerCase()
+      const phone = String(o?.customer?.phone || '').toLowerCase()
+      const phoneDigits = String(o?.customer?.phone || '').replace(/[^0-9]/g, '')
+      const id = String(o?.id || '')
+      const idClean = id.replace(/-/g, '').toLowerCase()
+      const idShort = idClean.slice(-8)
+
+      // Compute displayed customer code (same logic as in card)
+      let biz = ''
+      try {
+        biz = (o?.business?.business_name && String(o.business.business_name).trim()) ? o.business.business_name : listBizName
+      } catch {}
+      const code = String(computeCustomerCode(biz, o?.customer_name || '', o?.customer?.phone || '') || '').toLowerCase()
+
+      const matches = (
+        notes.includes(q) ||
+        status.includes(q) ||
+        name.includes(q) ||
+        phone.includes(q) ||
+        (!!qDigits && phoneDigits.includes(qDigits)) ||
+        id.toLowerCase().includes(q) ||
+        idClean.includes(qAlnum) ||
+        idShort.includes(qAlnum) ||
+        code.includes(q)
+      )
+      return matches
+    })
+  }, [orders, search, listBizName])
 
   async function openCreate(){
     setForm({ customer_id: "", garment_category: "", quantity_thobe: 0, quantity_sirwal: 0, due_date: "", notes: "" })
@@ -1163,16 +1203,28 @@ export default function Orders() {
                       ✓ Invoice ready
                     </span>
                   ) : <span />}
-                  {(canInvCreate || canInvUpdate) && (
-                    <button
-                      type="button"
-                      onClick={()=> createOrOpenInvoice(o)}
-                      className="text-xs px-2 py-1 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30"
-                      title={invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
-                    >
-                      {invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <PermissionGate module="jobcards" action="create">
+                      <button
+                        type="button"
+                        onClick={()=> openJobCardForOrder(o)}
+                        className="text-xs px-2 py-1 rounded border border-fuchsia-400/40 bg-fuchsia-600/20 text-fuchsia-100 hover:bg-fuchsia-600/30"
+                        title="Create Job Card"
+                      >
+                        Create Job Card
+                      </button>
+                    </PermissionGate>
+                    {(canInvCreate || canInvUpdate) && (
+                      <button
+                        type="button"
+                        onClick={()=> createOrOpenInvoice(o)}
+                        className="text-xs px-2 py-1 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30"
+                        title={invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
+                      >
+                        {invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
