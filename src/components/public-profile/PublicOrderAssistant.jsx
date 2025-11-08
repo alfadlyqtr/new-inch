@@ -5,6 +5,7 @@ export default function PublicOrderAssistant({ business }) {
   const settings = business?.public_profile_settings || {}
   const cfg = settings.chatbot || {}
   const enabled = !!cfg.enabled && (cfg.mode || 'phone_order') === 'phone_order'
+  const previewForce = settings.preview_force_assistant === true
   const greeting = cfg.greeting || 'Hi! Enter your phone and order code to check your order status.'
   const [open, setOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -12,7 +13,7 @@ export default function PublicOrderAssistant({ business }) {
   const [result, setResult] = useState(null)
   const [form, setForm] = useState({ phone: '', orderCode: '' })
 
-  const canShow = enabled && business?.id
+  const canShow = (enabled || previewForce) && business?.id
 
   async function lookup(e){
     e?.preventDefault?.()
@@ -38,7 +39,7 @@ export default function PublicOrderAssistant({ business }) {
   const primary = settings?.theme_settings?.primary_color || '#7C3AED'
 
   return (
-    <div className="fixed right-4 bottom-4 z-50">
+    <div className="absolute right-4 bottom-4 z-50">
       {!open ? (
         <button
           onClick={()=> setOpen(true)}
@@ -77,7 +78,7 @@ export default function PublicOrderAssistant({ business }) {
                 <div className="opacity-75">#{String(result.order.id).slice(0,8)}</div>
               </div>
               <div className="mt-1">Status: <span className="opacity-90">{result.order.status || '—'}</span></div>
-              <div>Due: <span className="opacity-90">{result.order.due_date ? new Date(result.order.due_date).toLocaleString() : '—'}</span></div>
+              <div>Due: <span className="opacity-90">{result.order.delivery_date ? new Date(result.order.delivery_date).toLocaleString() : '—'}</span></div>
               {result.job_card && (
                 <div className="mt-2">
                   <div className="opacity-80">Workshop</div>

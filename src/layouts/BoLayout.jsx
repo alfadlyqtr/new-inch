@@ -32,7 +32,7 @@ function SideLink({ to, label, icon, collapsed, onNavigate }) {
       }
       onClick={() => { try { onNavigate && onNavigate() } catch {} }}
     >
-      <span className="text-base/none opacity-90">{icon}</span>
+      <span className={`${collapsed ? "text-2xl" : "text-base"} leading-none opacity-90`}>{icon}</span>
       {!collapsed && <span className="capitalize">{label}</span>}
     </NavLink>
   )
@@ -232,8 +232,8 @@ export default function BoLayout() {
       {/* Sidebar */}
       <aside className={`${
         // On mobile, aside itself is width 0 so it does not push content; overlay panel below is fixed.
-        effectiveCollapsed ? "w-0 md:w-20" : "w-0 md:w-80"
-      } relative md:sticky md:top-6 h-0 md:h-[88vh] overflow-visible md:px-2 md:mx-3`}>
+        effectiveCollapsed ? "w-0 md:w-24" : "w-0 md:w-80"
+      } relative md:sticky md:top-2 h-0 md:h-[96vh] overflow-visible md:px-2 md:mx-3`}>
         {/* Mobile overlay panel */}
         <div className={`${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
@@ -248,7 +248,7 @@ export default function BoLayout() {
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
           <div className={`flex items-center ${effectiveCollapsed ? "justify-center" : "gap-3"} px-2 py-3`}>
-            <img src="/logo.jpg" alt="INCH logo" className="h-10 w-10 rounded-md object-cover border border-white/20 glow bg-white/5" />
+            <img src="/logo.jpg" alt="INCH logo" className={`${effectiveCollapsed ? "h-12 w-12" : "h-10 w-10"} rounded-md object-cover border border-white/20 glow bg-white/5`} />
             {!effectiveCollapsed && (
               <div>
                 <div className="text-white font-semibold leading-5">{t('layout.brandName')}</div>
@@ -272,14 +272,16 @@ export default function BoLayout() {
           <div className="mt-auto p-2">
             <div className={`glass rounded-xl p-2 flex items-center ${effectiveCollapsed ? "justify-center" : "gap-2"}`}>
               {avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" className="h-8 w-8 rounded-full object-cover border border-white/20" />
+                <img src={avatarUrl} alt="Avatar" className={`${effectiveCollapsed ? "h-10 w-10" : "h-8 w-8"} rounded-full object-cover border border-white/20`} />
               ) : (
-                <div className="h-8 w-8 rounded-full bg-white/10" />
+                <div className={`${effectiveCollapsed ? "h-10 w-10" : "h-8 w-8"} rounded-full bg-white/10`} />
               )}
-              <div className="text-xs">
-                <div className="text-white/90">{userName || "—"}</div>
-                <div className="text-white/70">{t('layout.roleOwner')}</div>
-              </div>
+              {!effectiveCollapsed && (
+                <div className="text-xs">
+                  <div className="text-white/90">{userName || "—"}</div>
+                  <div className="text-white/70">{t('layout.roleOwner')}</div>
+                </div>
+              )}
             </div>
             <div className="mt-3">
               <button
@@ -292,7 +294,9 @@ export default function BoLayout() {
                   <polyline points="16 17 21 12 16 7" />
                   <line x1="21" y1="12" x2="9" y2="12" />
                 </svg>
-                <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
+                {!effectiveCollapsed && (
+                  <span>{signingOut ? t('common.signingOut') : t('common.signOut')}</span>
+                )}
               </button>
             </div>
           </div>

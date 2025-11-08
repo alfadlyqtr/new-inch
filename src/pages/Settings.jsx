@@ -114,6 +114,24 @@ export default function Settings() {
   // Appearance tab local state and helpers
   const [appearanceNotice, setAppearanceNotice] = useState("")
   const [savingAppearance, setSavingAppearance] = useState(false)
+  const [bgMode, setBgMode] = useState('dark') // 'dark' | 'light' (BG only)
+  // Ensure BG-only checkbox reflects saved value immediately after refresh
+  useEffect(() => {
+    try {
+      const ls = window.localStorage
+      const saved =
+        ls.getItem('appBg') ||
+        ls.getItem('inch_app_bg') ||
+        (typeof getLsKey === 'function' ? ls.getItem(getLsKey('appBg')) : null)
+      const bg = (saved === 'light' || saved === 'dark') ? saved : 'dark'
+      setBgMode(bg)
+      document.documentElement.setAttribute('data-app-bg', bg)
+    } catch {}
+  }, [])
+  // Borders (card/widget)
+  const [borderColor, setBorderColor] = useState('')
+  const [borderWidth, setBorderWidth] = useState(1)
+  const [borderRadius, setBorderRadius] = useState(16)
   // Persist minimal appearance to localStorage (scoped per user via getLsKey)
   function setLocalAppearance(a) {
     try {
@@ -325,7 +343,30 @@ export default function Settings() {
                 color: glow.mode === "custom" ? glow.color : null,
                 depth: Number.isFinite(glow.depth) ? glow.depth : 60,
               },
+              borders: {
+                color: (appr.borders && appr.borders.color) || undefined,
+                width: Number.isFinite(appr.borders?.width) ? appr.borders.width : undefined,
+                radius: Number.isFinite(appr.borders?.radius) ? appr.borders.radius : undefined,
+              }
             })
+            // Local state mirror for UI controls
+            if (appr.borders) {
+              if (typeof appr.borders.color === 'string') setBorderColor(appr.borders.color)
+              if (Number.isFinite(appr.borders.width)) setBorderWidth(appr.borders.width)
+              if (Number.isFinite(appr.borders.radius)) setBorderRadius(appr.borders.radius)
+            }
+            // Hydrate BG-only mode
+            const bg = (appr.bg_mode === 'light') ? 'light' : 'dark'
+            setBgMode(bg)
+            try {
+              document.documentElement.setAttribute('data-app-bg', bg)
+              // Persist to global keys FIRST so AppLayout can read early on mount
+              localStorage.setItem('appBg', bg)
+              localStorage.setItem('inch_app_bg', bg)
+            } catch {}
+            try {
+              if (typeof getLsKey === 'function') localStorage.setItem(getLsKey('appBg'), bg)
+            } catch {}
           }
           // Hydrate user profile preferences
           const profile = settings.user_profile || {}
@@ -734,6 +775,12 @@ export default function Settings() {
                 custom: { primary: appearance.customColors.primary, accent: appearance.customColors.secondary },
                 angle: appearance.angle,
                 glow: appearance.glow,
+                bg_mode: bgMode,
+                borders: {
+                  color: borderColor || null,
+                  width: Number(borderWidth) || 0,
+                  radius: Number(borderRadius) || 0,
+                },
               }
             },
             { onConflict: 'user_id' }
@@ -838,6 +885,8 @@ export default function Settings() {
             </button>
           ))}
         </div>
+
+        
       </div>
 
       {/* Business Information (owners only) */}
@@ -1275,6 +1324,62 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Background-only Light Mode */}
+        <div className="mt-8">
+          <div className="text-sm font-medium text-white/90">Background only</div>
+          <p className="text-xs text-slate-400 mt-1">Switch only the app background to light. Sidebar and buttons remain themed.</p>
+          <div className="mt-3 flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={bgMode === 'light'}
+                onChange={(e) => {
+                  const next = e.target.checked ? 'light' : 'dark'
+                  setBgMode(next)
+                  try {
+                    document.documentElement.setAttribute('data-app-bg', next)
+                    // Write global keys first
+                    localStorage.setItem('appBg', next)
+                    localStorage.setItem('inch_app_bg', next)
+                  } catch {}
+                  try {
+                    if (typeof getLsKey === 'function') localStorage.setItem(getLsKey('appBg'), next)
+                  } catch {}
+                }}
+              />
+              Light background (BG only)
+            </label>
+          </div>
+        </div>
+
+        {/* Card/Widget Borders */}
+        <div className="mt-8">
+          <div className="text-sm font-medium text-white/90">Card borders</div>
+          <p className="text-xs text-slate-400 mt-1">Customize widget/card border color, width, and radius. Applies in both light and dark backgrounds.</p>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              Color
+              <input type="color" className="h-8 w-10 p-0 bg-transparent border border-white/10 rounded"
+                value={borderColor || '#e5e7eb'}
+                onChange={(e)=>{ const v = e.target.value; setBorderColor(v); updateAppearance({ borders: { ...(appearance.borders||{}), color: v } }) }} />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              Width
+              <input type="number" min="0" max="6" className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10"
+                value={borderWidth}
+                onChange={(e)=>{ const v = Math.max(0, Math.min(6, Number(e.target.value)||0)); setBorderWidth(v); updateAppearance({ borders: { ...(appearance.borders||{}), width: v } }) }} />
+              px
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              Radius
+              <input type="number" min="0" max="32" className="w-16 px-2 py-1 rounded bg-white/5 border border-white/10"
+                value={borderRadius}
+                onChange={(e)=>{ const v = Math.max(0, Math.min(32, Number(e.target.value)||0)); setBorderRadius(v); updateAppearance({ borders: { ...(appearance.borders||{}), radius: v } }) }} />
+              px
+            </label>
+          </div>
+        </div>
+
         <div className="mt-6 flex items-center justify-between text-xs text-slate-400">
           <div className="flex items-center gap-3">
             <span>{t('appearance.themeChangesApplyInstantly')}</span>
@@ -1291,10 +1396,23 @@ export default function Settings() {
                   theme: "purple",
                   customColors: { primary: "#7C3AED", secondary: "#D946EF" },
                   angle: 90,
-                  glow: { mode: "match", color: "#7C3AED", depth: 60 }
+                  glow: { mode: "match", color: "#7C3AED", depth: 60 },
                 }
                 setLocalAppearance(defaultAppearance)
                 updateAppearance(defaultAppearance)
+                setBgMode('dark')
+                try { 
+                  document.documentElement.setAttribute('data-app-bg', 'dark'); 
+                  // Global keys first
+                  localStorage.setItem('appBg', 'dark');
+                  localStorage.setItem('inch_app_bg', 'dark');
+                } catch {}
+                try {
+                  if (typeof getLsKey === 'function') localStorage.setItem(getLsKey('appBg'), 'dark')
+                } catch {}
+                setBorderColor('')
+                setBorderWidth(1)
+                setBorderRadius(16)
               }}
             >{t('appearance.resetToDefault')}</button>
           </div>

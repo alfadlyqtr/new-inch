@@ -46,6 +46,9 @@ export default function Orders() {
   const [viewBizName, setViewBizName] = useState("")
   const [businessName, setBusinessName] = useState("")
   const [issuingId, setIssuingId] = useState(null)
+  const [deleteOrderId, setDeleteOrderId] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   // Pricing engine integration
   const [priceBook, setPriceBook] = useState(null)
   const [inventoryItems, setInventoryItems] = useState([])
@@ -54,6 +57,13 @@ export default function Orders() {
   const location = useLocation()
   const navigate = useNavigate()
   const [focusOrderId, setFocusOrderId] = useState(null)
+  // Tabs and grouping
+  const TABS = ['All','Open','In Progress','Ready','Completed','Invoiced','Overdue','Archived']
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return localStorage.getItem('orders_active_tab') || 'All' } catch { return 'All' }
+  })
+  // Default collapsed on first load for scalability; persist after interactions
+  const [expandedCustomers, setExpandedCustomers] = useState(() => new Set())
   // Edit modal measurement editor (isolated from create flow)
   const [editMeasureOpen, setEditMeasureOpen] = useState(false)
   const [editMeasureType, setEditMeasureType] = useState('thobe')
@@ -69,6 +79,123 @@ export default function Orders() {
     } catch { return JSON.stringify(obj||{}) }
   }
 
+  // Server-side fetch with optional query and tab
+  async function fetchOrdersServer({ q = '', tab = 'All' } = {}){
+    if (!ids.business_id) return
+    setLoading(true)
+    try {
+      let req = supabase
+        .from('orders')
+        .select('id,business_id,customer_id,customer_name,items,status,delivery_date,notes,created_at, customer:customer_id ( id, phone, name ), business:business_id ( business_name )')
+        .eq('business_id', ids.business_id)
+        .order('created_at', { ascending: false })
+        .limit(200)
+
+      // Tab filter
+      const tabLc = String(tab||'All').toLowerCase()
+      if (tabLc !== 'all') {
+        if (tabLc === 'invoiced') req = req.in('status', ['invoiced','invoice','billed'])
+        else if (tabLc === 'completed') req = req.in('status', ['completed','done','finished'])
+        else if (tabLc === 'in progress') req = req.or('status.eq.in progress,status.eq.started,status.eq.processing')
+        else if (tabLc === 'ready') req = req.in('status', ['ready','ready for pickup','ready_for_pickup'])
+        else if (tabLc === 'overdue') req = req.in('status', ['overdue','late'])
+        else if (tabLc === 'archived') req = req.eq('status','archived')
+        else if (tabLc === 'open') req = req.in('status', ['open','new','pending'])
+      }
+
+      // Search filter (server-side)
+      const query = String(q||'').trim()
+      if (query) {
+        const like = `%${query}%`
+        req = req.or(
+          `customer_name.ilike.${like},notes.ilike.${like},id.ilike.${like}`
+        )
+      }
+
+      const { data, error } = await req
+      if (error) throw error
+      setOrders(data || [])
+      // Index invoices for found orders
+      const idsList = (data||[]).map(o => o.id)
+      if (idsList.length) {
+        const { data: invs } = await supabase.from('invoices').select('id, order_id, status, issued_at').in('order_id', idsList)
+        const map = {}
+        ;(invs||[]).forEach(inv => { if (inv?.order_id) map[inv.order_id] = { id: inv.id, status: inv.status, created_at: inv.issued_at } })
+        setInvoicesByOrder(map)
+      } else {
+        setInvoicesByOrder({})
+      }
+    } catch (e) {
+      console.error('search orders failed', e)
+      setOrders([])
+      setInvoicesByOrder({})
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Master search action
+  async function runMasterSearch(){
+    await fetchOrdersServer({ q: search, tab: activeTab })
+  }
+
+  // Delete order and dependencies (job cards, assignments, activity, invoices)
+  async function deleteOrderAndDeps(orderId){
+    if (!orderId) { setDeleteError('Missing order id'); return }
+    if (!ids.business_id) { setDeleteError('Missing business context'); return }
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      // Find any job cards for this order (one per our constraint, but handle list defensively)
+      const { data: jcs, error: jcErr } = await supabase
+        .from('job_cards')
+        .select('id')
+        .eq('business_id', ids.business_id)
+        .eq('order_id', orderId)
+      if (jcErr) throw new Error(`job_cards lookup: ${jcErr.message}`)
+      const jcIds = (jcs||[]).map(x=>x.id)
+      if (jcIds.length){
+        const { error: aErr } = await supabase.from('job_assignments').delete().in('job_card_id', jcIds)
+        if (aErr) throw new Error(`job_assignments: ${aErr.message}`)
+        const { error: actErr } = await supabase.from('job_activity').delete().in('job_card_id', jcIds)
+        if (actErr) throw new Error(`job_activity: ${actErr.message}`)
+        const { error: jcDelErr } = await supabase.from('job_cards').delete().in('id', jcIds)
+        if (jcDelErr) throw new Error(`job_cards: ${jcDelErr.message}`)
+      }
+      // Delete invoices (and their items) for this order
+      {
+        const { data: invs, error: invLookupErr } = await supabase
+          .from('invoices')
+          .select('id')
+          .eq('order_id', orderId)
+          .eq('business_id', ids.business_id)
+        if (invLookupErr) throw new Error(`invoices lookup: ${invLookupErr.message}`)
+        const invIds = (invs||[]).map(x=>x.id)
+        if (invIds.length){
+          const { error: iiErr } = await supabase.from('invoice_items').delete().in('invoice_id', invIds)
+          if (iiErr) throw new Error(`invoice_items: ${iiErr.message}`)
+          const { error: invErr } = await supabase.from('invoices').delete().in('id', invIds)
+          if (invErr) throw new Error(`invoices: ${invErr.message}`)
+        }
+      }
+      // Delete the order itself
+      {
+        const { error: ordErr } = await supabase
+          .from('orders')
+          .delete()
+          .eq('id', orderId)
+          .eq('business_id', ids.business_id)
+        if (ordErr) throw new Error(`orders: ${ordErr.message}`)
+      }
+      setDeleteOrderId(null)
+      await fetchOrdersServer({ q: search, tab: activeTab })
+    } catch (e) {
+      setDeleteError(e?.message || 'Failed to delete order')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   // Open JobCards page with this order/customer prefilled
   function openJobCardForOrder(o){
     try {
@@ -80,27 +207,9 @@ export default function Orders() {
     } catch {}
   }
 
-  // Simple one-click create/open invoice for an order (frontend only)
+  // One-click create or refresh invoice with computed totals, then open detail
   async function createOrOpenInvoice(o){
-    try {
-      if (!o?.id || !ids.business_id) throw new Error('Missing order or business')
-      const invId = await ensureInvoiceFromOrder({
-        orderId: o.id,
-        businessId: ids.business_id,
-        customerId: o.customer_id,
-        dueDate: o.due_date || o.delivery_date || null,
-        currency: invoiceCfg?.currency || 'SAR',
-      })
-      // Toast success (graceful if toast lib not present)
-      try { if (window && window.toast && typeof window.toast.success === 'function') window.toast.success('Invoice ready') } catch {}
-      try { alert('Invoice ready') } catch {}
-      // Redirect to Invoice Detail page
-      navigate(`/bo/invoices/${invId}`)
-    } catch (e) {
-      console.error('create/open invoice failed', e)
-      try { if (window && window.toast && typeof window.toast.error === 'function') window.toast.error(e?.message||'Failed') } catch {}
-      try { alert(e?.message || 'Failed to open invoice') } catch {}
-    }
+    await issueInvoice(o)
   }
 
   // Load active price book, inventory items, and invoice settings
@@ -167,6 +276,25 @@ export default function Orders() {
       try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {}
     }
   }, [focusOrderId, orders, search])
+
+  // Persist UI state
+  useEffect(() => { try { localStorage.setItem('orders_active_tab', activeTab) } catch {} }, [activeTab])
+  useEffect(() => { try { localStorage.setItem('orders_expanded_customers', JSON.stringify(Array.from(expandedCustomers))) } catch {} }, [expandedCustomers])
+
+  // Status filter by tab
+  const statusMatchesTab = (st) => {
+    const s = String(st||'').toLowerCase()
+    const tab = String(activeTab||'All').toLowerCase()
+    if (tab === 'all') return true
+    if (tab === 'invoiced') return s === 'invoiced' || s === 'invoice' || s === 'billed'
+    if (tab === 'completed') return s === 'completed' || s === 'done' || s === 'finished'
+    if (tab === 'in progress') return s.includes('progress') || s === 'started' || s === 'processing'
+    if (tab === 'ready') return s === 'ready' || s === 'ready for pickup' || s === 'ready_for_pickup'
+    if (tab === 'overdue') return s === 'overdue' || s === 'late'
+    if (tab === 'archived') return s === 'archived'
+    if (tab === 'open') return s === 'open' || s === 'new' || s === 'pending'
+    return true
+  }
 
   // Ensure we know invoice existence for displayed orders. If some orders are
   // missing in invoicesByOrder, fetch just those to keep labels accurate.
@@ -359,7 +487,7 @@ export default function Orders() {
         if (sameItems && sameTotals) {
           // No changes, just redirect
           finalInvoiceId = existingInv.id
-          navigate(`/bo/invoice/${finalInvoiceId}`)
+          navigate(`/bo/invoices/${finalInvoiceId}`)
           return
         }
         const { error: upErr } = await supabase.from('invoices').update(payload).eq('id', existingInv.id)
@@ -397,6 +525,44 @@ export default function Orders() {
         } catch {}
       }
 
+      // Upsert invoice_items from computed totals
+      try {
+        if (finalInvoiceId) {
+          const lines = Array.isArray(totals.lineItems) ? totals.lineItems : []
+          const toInsert = []
+          if (lines.length) {
+            lines.forEach(li => {
+              toInsert.push({
+                invoice_id: finalInvoiceId,
+                name: li.name || (o?.items?.garment_category || 'Item'),
+                sku: li.sku || null,
+                qty: Number(li.qty || li.quantity || o?.items?.quantity || 1),
+                unit: li.unit || 'unit',
+                unit_price: Number(li.unit_price || li.price || 0),
+                discount: li.discount != null ? Number(li.discount) : null,
+                tax_code: li.tax_code || null,
+                line_total: Number(li.amount || li.line_total || (Number(li.unit_price||0) * Number(li.qty||1)))
+              })
+            })
+          } else {
+            const qty = Number(o?.items?.quantity || 1)
+            toInsert.push({
+              invoice_id: finalInvoiceId,
+              name: String(o?.items?.garment_category || 'Item'),
+              sku: null,
+              qty,
+              unit: 'unit',
+              unit_price: qty > 0 ? Number((totals.total || 0) / qty) : Number(totals.total || 0),
+              discount: null,
+              tax_code: null,
+              line_total: Number(totals.total || 0)
+            })
+          }
+          await supabase.from('invoice_items').delete().eq('invoice_id', finalInvoiceId)
+          if (toInsert.length) await supabase.from('invoice_items').insert(toInsert)
+        }
+      } catch {}
+
       // Update order pricing snapshot fields
       const firstThUnit = totals.lineItems.find(li => li.name === 'Thobe')?.unit_price || null
       const firstSirwalUnit = totals.lineItems.find(li => li.name === 'Sirwal')?.unit_price || null
@@ -412,7 +578,7 @@ export default function Orders() {
       await supabase.from('orders').update(ordUpdate).eq('id', o.id)
 
       // Navigate to Invoice Detail for final review/print/send
-      if (finalInvoiceId) navigate(`/bo/invoice/${finalInvoiceId}`)
+      if (finalInvoiceId) navigate(`/bo/invoices/${finalInvoiceId}`)
 
       // Broadcast invoice update so CustomerCard and other views can refresh
       try {
@@ -752,6 +918,8 @@ export default function Orders() {
   }, [])
 
   useEffect(() => { if (ids.business_id && canView) { loadOrders(); loadCustomers(); } }, [ids.business_id, canView])
+  // Re-run server search when tab changes (using current query)
+  useEffect(() => { if (ids.business_id && canView) { fetchOrdersServer({ q: search, tab: activeTab }) } }, [activeTab])
 
   // Clear stale customer selection warning once a customer is picked
   useEffect(() => {
@@ -1144,8 +1312,10 @@ export default function Orders() {
               placeholder={t('orders.searchPlaceholder', { defaultValue: 'Search orders' })}
               value={search}
               onChange={(e)=> setSearch(e.target.value)}
+              onKeyDown={(e)=> { if (e.key === 'Enter') { e.preventDefault(); runMasterSearch() } }}
               className="rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
             />
+            <button onClick={runMasterSearch} className="px-3 py-2 rounded-md text-sm border border-white/15 bg-white/5 text-white/85 hover:bg-white/10">{t('common.actions.search', { defaultValue: 'Search' })}</button>
             <PermissionGate module="orders" action="create">
               <button onClick={openCreate} className="px-3 py-2 rounded-md text-sm pill-active glow">{t('orders.actions.newOrder', { defaultValue: 'New Order' })}</button>
             </PermissionGate>
@@ -1153,82 +1323,163 @@ export default function Orders() {
         </div>
       </div>
 
+      {/* Delete Order confirm */}
+      {deleteOrderId && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
+          <div className="glass rounded-2xl border border-white/10 p-6 w-full max-w-md">
+            <div className="text-white/90 font-medium">Delete this order?</div>
+            <div className="text-sm text-white/70 mt-1">This will also delete any related job cards and invoices. This action cannot be undone.</div>
+            {deleteError && (
+              <div className="mt-3 rounded border border-rose-400/40 bg-rose-600/20 text-rose-100 text-xs px-3 py-2 whitespace-pre-wrap">{deleteError}</div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button disabled={deleting} onClick={()=> setDeleteOrderId(null)} className="px-3 py-2 rounded-md text-sm bg-white/5 border border-white/10 text-slate-200">Cancel</button>
+              <button disabled={deleting} onClick={()=> deleteOrderAndDeps(deleteOrderId)} className="px-3 py-2 rounded-md text-sm bg-rose-600/20 border border-rose-500/30">{deleting ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="glass rounded-2xl border border-white/10 p-6">
+        {/* Tabs */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {TABS.map(tab => (
+            <button
+              key={tab}
+              onClick={()=> setActiveTab(tab)}
+              className={`px-3 py-1.5 rounded-full text-xs border ${activeTab===tab ? 'pill-active glow border-white/0' : 'border-white/15 bg-white/5 text-white/80 hover:bg-white/10'}`}
+            >{tab}</button>
+          ))}
+        </div>
+
+        {/* Grouped list */}
         {loading ? (
           <div className="text-slate-400">{t('orders.loading', { defaultValue: 'Loading orders…' })}</div>
-        ) : filteredOrders.length === 0 ? (
-          <div className="text-slate-400">{t('orders.empty', { defaultValue: 'No orders yet' })}</div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredOrders.map(o => (
-              <div
-                key={o.id}
-                id={`order-card-${o.id}`}
-                className={`rounded-xl bg-white/5 border p-4 text-white/90 space-y-2 ${focusOrderId===o.id ? 'border-emerald-400/60 ring-2 ring-emerald-400/40 ring-offset-2 ring-offset-slate-900' : 'border-white/10'}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="text-white/85 font-medium truncate" title={o.customer_name || ''}>{o.customer_name || '—'}</div>
-                  <div className="flex items-center gap-2">
-                  <button type="button" onClick={()=> openView(o)} className="text-xs px-2 py-1 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10" title={t('orders.view', { defaultValue: 'View' })}>View</button>
-                  <PermissionGate module="orders" action="update">
-                    <button type="button" onClick={()=> openView(o)} className="text-xs px-2 py-1 rounded border border-sky-400/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25" title={t('orders.edit', { defaultValue: 'Edit' })}>Edit</button>
-                  </PermissionGate>
-                  <button type="button" onClick={()=> deleteOrder(o.id)} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-200 hover:bg-red-500/10">{t('orders.delete', { defaultValue: 'Delete' })}</button>
-                  {/* Moved invoice button to footer to avoid duplicates */}
-                </div>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-white/70">
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">{o.customer?.phone || '—'}</span>
-                  {(() => {
-                    const biz = (o.business?.business_name && String(o.business.business_name).trim()) ? o.business.business_name : listBizName
-                    const code = computeCustomerCode(biz, o.customer_name || '', o.customer?.phone || '')
-                    return (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10">Code: {code || '—'}</span>
-                    )
-                  })()}
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm uppercase tracking-wide text-white/60">{o.items?.garment_category || '—'}</div>
-                  <div className="text-sm text-white/60">{t('orders.qty', { defaultValue: 'Qty:' })} {o.items?.quantity ?? '—'}</div>
-                </div>
-                <div className="text-xs text-white/50">{t('orders.due', { defaultValue: 'Due:' })} {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</div>
-                {typeof o.total_amount === 'number' && (
-                  <div className="text-xs text-white/80">Total: {Number(o.total_amount||0).toFixed(2)}{o.currency ? ` ${o.currency}` : ''}</div>
-                )}
-                <div className="text-xs text-white/40" title={o.id || ''}>Order ID: #{o.id?.slice(0,8)}</div>
-                <div className="text-sm line-clamp-2 text-white/80">{o.notes || t('orders.noNotes', { defaultValue: 'No notes' })}</div>
-                <div className="pt-1 flex items-center justify-between gap-2">
-                  {invoicesByOrder[o.id] ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-600/15 border border-emerald-400/40 text-emerald-100" title={`Invoice exists${invoicesByOrder[o.id]?.updates ? ` • Updated ${invoicesByOrder[o.id].updates}x` : ''}`}>
-                      ✓ Invoice ready
-                    </span>
-                  ) : <span />}
-                  <div className="flex items-center gap-2">
-                    <PermissionGate module="jobcards" action="create">
-                      <button
-                        type="button"
-                        onClick={()=> openJobCardForOrder(o)}
-                        className="text-xs px-2 py-1 rounded border border-fuchsia-400/40 bg-fuchsia-600/20 text-fuchsia-100 hover:bg-fuchsia-600/30"
-                        title="Create Job Card"
-                      >
-                        Create Job Card
+          (() => {
+            // Apply search filter first (existing filteredOrders), then tab filter
+            const base = (filteredOrders || []).filter(o => statusMatchesTab(o?.status))
+            if (!base.length) return <div className="text-slate-400">{t('orders.empty', { defaultValue: 'No orders yet' })}</div>
+            // Group by customer_id
+            const groups = {}
+            base.forEach(o => {
+              const cid = o.customer_id || 'unknown'
+              if (!groups[cid]) groups[cid] = { customer_id: cid, name: o.customer_name || '—', phone: o.customer?.phone || '', orders: [] }
+              groups[cid].orders.push(o)
+            })
+            const entries = Object.values(groups).sort((a,b) => String(a.name).localeCompare(String(b.name)))
+            const isExpanded = (cid) => expandedCustomers.has(cid)
+            const toggle = (cid) => setExpandedCustomers(prev => { const n = new Set(prev); if (n.has(cid)) n.delete(cid); else n.add(cid); return n })
+            const statusBadge = (label, n, cls) => n>0 ? <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${cls}`}>{label}: {n}</span> : null
+            return (
+              <div className="space-y-3">
+                {entries.map(g => {
+                  const counts = g.orders.reduce((acc,o)=>{ const key = String(o.status||'').toLowerCase(); acc[key]=(acc[key]||0)+1; return acc }, {})
+                  const lastAt = g.orders.reduce((d,o)=>{ const t = o.delivery_date || o.created_at; const ts = t ? new Date(t).getTime() : 0; return Math.max(d, ts) }, 0)
+                  const lastStr = lastAt ? new Date(lastAt).toLocaleDateString() : '—'
+                  const showPreview = !isExpanded(g.customer_id)
+                  const previewList = showPreview ? g.orders.slice(0,3) : []
+                  return (
+                    <div key={g.customer_id} className="rounded-xl bg-white/5 border border-white/10">
+                      <button onClick={()=> toggle(g.customer_id)} className="w-full flex items-center justify-between px-3 py-2 text-left">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="text-white/90 font-medium truncate" title={g.name}>{g.name}</div>
+                          {g.phone && (<span className="hidden sm:inline text-xs text-white/60">{g.phone}</span>)}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-white/60">{g.orders.length} orders • Last {lastStr}</span>
+                          <span className={`h-5 w-5 inline-flex items-center justify-center rounded-full border ${isExpanded(g.customer_id)?'border-white/30 bg-white/10':'border-white/15 bg-white/5'} text-white/80`}>
+                            <svg className={`h-3.5 w-3.5 transition-transform ${isExpanded(g.customer_id) ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M9 18l6-6-6-6" />
+                            </svg>
+                          </span>
+                        </div>
                       </button>
-                    </PermissionGate>
-                    {(canInvCreate || canInvUpdate) && (
-                      <button
-                        type="button"
-                        onClick={()=> createOrOpenInvoice(o)}
-                        className="text-xs px-2 py-1 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30"
-                        title={invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
-                      >
-                        {invoicesByOrder[o.id] ? 'Open Invoice' : 'Create Invoice'}
-                      </button>
-                    )}
-                  </div>
-                </div>
+                      <div className="px-3 pb-3 flex flex-wrap gap-2">
+                        {statusBadge('Open', (counts['open']||0)+(counts['pending']||0)+(counts['new']||0), 'border-white/20 bg-white/5 text-white/80')}
+                        {statusBadge('In Progress', (counts['in progress']||0)+(counts['started']||0)+(counts['processing']||0), 'border-sky-400/40 bg-sky-500/15 text-sky-100')}
+                        {statusBadge('Ready', (counts['ready']||0)+(counts['ready for pickup']||0)+(counts['ready_for_pickup']||0), 'border-violet-400/40 bg-violet-500/15 text-violet-100')}
+                        {statusBadge('Completed', (counts['completed']||0)+(counts['done']||0), 'border-emerald-400/40 bg-emerald-600/20 text-emerald-100')}
+                        {statusBadge('Invoiced', (counts['invoiced']||0)+(counts['billed']||0), 'border-amber-300/40 bg-amber-500/15 text-amber-100')}
+                        {statusBadge('Overdue', (counts['overdue']||0)+(counts['late']||0), 'border-rose-400/40 bg-rose-500/15 text-rose-100')}
+                        {statusBadge('Archived', (counts['archived']||0), 'border-white/20 bg-white/5 text-white/70')}
+                      </div>
+                      {showPreview && previewList.length > 0 && (
+                        <div className="px-3 pb-3">
+                          <div className="text-xs text-white/60 mb-1">Latest {previewList.length}</div>
+                          <div className="space-y-2">
+                            {previewList.map(o => (
+                              <div key={o.id} className="rounded border border-white/10 bg-white/5 px-2 py-1 flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-white/80 truncate" title={o.items?.garment_category || ''}>{o.items?.garment_category || '—'}</span>
+                                  <span className="text-white/60">Qty {o.items?.quantity ?? '—'}</span>
+                                  <span className="text-white/50">Due {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</span>
+                                  <span className="text-white/40">#{o.id?.slice(0,8)}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button type="button" onClick={()=> openView(o)} className="text-[11px] px-2 py-0.5 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">View</button>
+                                  <PermissionGate module="orders" action="update">
+                                    <button type="button" onClick={()=> openView(o)} className="text-[11px] px-2 py-0.5 rounded border border-sky-400/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25">Edit</button>
+                                  </PermissionGate>
+                                  <PermissionGate module="orders" action="delete">
+                                    <button type="button" onClick={()=> setDeleteOrderId(o.id)} className="text-[11px] px-2 py-0.5 rounded border border-rose-400/40 bg-rose-600/20 text-rose-100 hover:bg-rose-600/30">Delete</button>
+                                  </PermissionGate>
+                                  {(canInvCreate || canInvUpdate) && (
+                                    <button type="button" onClick={()=> createOrOpenInvoice(o)} className="text-[11px] px-2 py-0.5 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30">Invoice</button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {g.orders.length > previewList.length && (
+                            <div className="mt-2">
+                              <button onClick={()=> toggle(g.customer_id)} className="text-[11px] px-2 py-0.5 rounded-full border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">Show all ({g.orders.length})</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {isExpanded(g.customer_id) && (
+                        <div className="px-3 pb-3">
+                          <div className="divide-y divide-white/10 rounded border border-white/10 bg-white/5">
+                            {g.orders
+                              .slice() // copy
+                              .sort((a,b)=> String(b.created_at||'').localeCompare(String(a.created_at||'')))
+                              .map(o => (
+                              <div key={o.id} id={`order-card-${o.id}`} className="px-3 py-2 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="text-white/80 truncate" title={o.items?.garment_category || ''}>{o.items?.garment_category || '—'}</span>
+                                  <span className="text-white/60">Qty {o.items?.quantity ?? '—'}</span>
+                                  <span className="text-white/50">Due {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString() : '—'}</span>
+                                  {typeof o.total_amount === 'number' && (<span className="text-white/70">{Number(o.total_amount||0).toFixed(2)}{o.currency ? ` ${o.currency}` : ''}</span>)}
+                                  <span className="text-white/40">#{o.id?.slice(0,8)}</span>
+                                  <span className="text-[11px] text-white/60 capitalize">{String(o.status||'').replace('_',' ')}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button type="button" onClick={()=> openView(o)} className="text-[11px] px-2 py-0.5 rounded border border-white/15 bg-white/5 text-white/80 hover:bg-white/10">View</button>
+                                  <PermissionGate module="orders" action="update">
+                                    <button type="button" onClick={()=> openView(o)} className="text-[11px] px-2 py-0.5 rounded border border-sky-400/40 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25">Edit</button>
+                                  </PermissionGate>
+                                  <PermissionGate module="orders" action="delete">
+                                    <button type="button" onClick={()=> setDeleteOrderId(o.id)} className="text-[11px] px-2 py-0.5 rounded border border-rose-400/40 bg-rose-600/20 text-rose-100 hover:bg-rose-600/30">Delete</button>
+                                  </PermissionGate>
+                                  <PermissionGate module="jobcards" action="create">
+                                    <button type="button" onClick={()=> openJobCardForOrder(o)} className="text-[11px] px-2 py-0.5 rounded border border-fuchsia-400/40 bg-fuchsia-600/20 text-fuchsia-100 hover:bg-fuchsia-600/30">Job Card</button>
+                                  </PermissionGate>
+                                  {(canInvCreate || canInvUpdate) && (
+                                    <button type="button" onClick={()=> createOrOpenInvoice(o)} className="text-[11px] px-2 py-0.5 rounded border border-emerald-400/40 bg-emerald-600/20 text-emerald-100 hover:bg-emerald-600/30">Invoice</button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-            ))}
-          </div>
+            )
+          })()
         )}
       </div>
 

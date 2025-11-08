@@ -4,6 +4,15 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
+// Apply saved BG-only mode synchronously BEFORE React renders to prevent dark flash
+try {
+  const ls = window.localStorage
+  const earlyBg = ls.getItem('appBg') || ls.getItem('inch_app_bg')
+  if (earlyBg === 'light' || earlyBg === 'dark') {
+    document.documentElement.setAttribute('data-app-bg', earlyBg)
+  }
+} catch {}
+
 // i18n setup
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'

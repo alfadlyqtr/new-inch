@@ -62,12 +62,309 @@
   --color-brand-fuchsia: #06B6D4; /* Cyan accent */
 }
 
-/* App background: subtle radial gradient with dark base (uses theme vars) */
+/* App background variable (BG-only theming). Default is the existing dark gradient. */
+:root {
+  --app-bg: radial-gradient(1200px 700px at 10% -10%, color-mix(in srgb, var(--color-brand-primary) 25%, transparent), transparent 60%),
+             radial-gradient(900px 600px at 110% 10%, color-mix(in srgb, var(--color-brand-fuchsia) 20%, transparent), transparent 55%),
+             linear-gradient(180deg, #0B1220 0%, #0A0F1A 100%);
+  /* Card/widget border tokens with sane defaults */
+  --card-border-color: rgba(255,255,255,0.08);
+  --card-border-width: 1px;
+  --card-radius: 16px;
+}
+
+/* Light background (BG only). Does not affect sidebar or buttons. */
+:root[data-app-bg="light"] {
+  --app-bg: #ffffff; /* pure white page background */
+  /* Use light borders on cards/panels in light mode */
+  --card-border-color: #e5e7eb; /* slate-200 */
+}
+
+/* App background uses the variable above */
 .bg-app {
-  background:
-    radial-gradient(1200px 700px at 10% -10%, color-mix(in srgb, var(--color-brand-primary) 25%, transparent), transparent 60%),
-    radial-gradient(900px 600px at 110% 10%, color-mix(in srgb, var(--color-brand-fuchsia) 20%, transparent), transparent 55%),
-    linear-gradient(180deg, #0B1220 0%, #0A0F1A 100%);
+  background: var(--app-bg);
+}
+
+/* Light mode (BG only) tweaks for content surfaces */
+:root[data-app-bg="light"] .glass {
+  background: #ffffff;
+  border: var(--card-border-width) solid var(--card-border-color, #e5e7eb); /* fallback slate-200 */
+  box-shadow: 
+    0 0 0 1px color-mix(in srgb, var(--glow-color) 70%, transparent) inset,
+    0 0 18px 1px color-mix(in srgb, var(--glow-color) 38%, transparent) inset,
+    0 16px calc(var(--glow-soft-blur) + 12px) 0 color-mix(in srgb, var(--glow-color) 58%, transparent),
+    0 0 32px 3px color-mix(in srgb, var(--color-brand-fuchsia) 48%, transparent);
+  backdrop-filter: none;
+  border-radius: var(--card-radius);
+}
+
+/* Make text readable in light mode: remap white text utilities globally */
+:root[data-app-bg="light"] .text-white,
+:root[data-app-bg="light"] [class*="text-white/"] {
+  color: #1f2937 !important; /* slate-800 */
+}
+/* Preserve white text only inside the sidebar/nav */
+:root[data-app-bg="light"] aside .pill-active,
+:root[data-app-bg="light"] aside .pill-active * {
+  color: #fff !important;
+}
+
+/* Base text color in light mode */
+:root[data-app-bg="light"] { color: #111827; }
+
+/* App-wide: make all content text dark in light mode, except the sidebar */
+:root[data-app-bg="light"] .app-root > :not(aside),
+:root[data-app-bg="light"] .app-root > :not(aside) * {
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Light mode: ensure panels/cards inside content have white surfaces (no gray wash) */
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-#0f172a"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-[#0f172a]"],
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-slate-900,
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-slate-800,
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-slate-700,
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-gray-900,
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-gray-800,
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-gray-700,
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-black/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-slate-900/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-slate-800/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-slate-700/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-gray-900/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-gray-800/"],
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-gray-700/"] {
+  background: #ffffff !important;
+}
+/* If a component explicitly uses a Tailwind text-* utility, still force black */
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="text-"] {
+  color: #0f172a !important;
+}
+/* Buttons and clickable chips */
+:root[data-app-bg="light"] .app-root > :not(aside) button,
+:root[data-app-bg="light"] .app-root > :not(aside) [role="button"],
+:root[data-app-bg="light"] .app-root > :not(aside) .btn,
+:root[data-app-bg="light"] .app-root > :not(aside) .chip,
+:root[data-app-bg="light"] .app-root > :not(aside) .badge {
+  color: #0f172a !important;
+}
+/* Ensure icons follow the text color */
+:root[data-app-bg="light"] .app-root > :not(aside) svg {
+  color: currentColor !important;
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
+/* Disabled or aria-disabled: keep text black and readable */
+:root[data-app-bg="light"] .app-root > :not(aside) [disabled],
+:root[data-app-bg="light"] .app-root > :not(aside) [aria-disabled="true"] {
+  color: #0f172a !important;
+  opacity: 1 !important;
+}
+/* In content area, even pills use black text */
+
+/* Content area: eliminate semi-gray washes; make surfaces truly white */
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="bg-white/"] {
+  background: #ffffff !important;
+}
+/* Extra hard overrides for common Inventory panel classes */
+:root[data-app-bg="light"] .app-root > :not(aside) .bg-slate-900\/50 {
+  background: #ffffff !important;
+}
+/* Global safety net: if any dark panel class slipped outside content scope, still force white */
+:root[data-app-bg="light"] .bg-slate-900\/50,
+:root[data-app-bg="light"] .bg-slate-900,
+:root[data-app-bg="light"] .bg-slate-800,
+:root[data-app-bg="light"] .bg-slate-700,
+:root[data-app-bg="light"] .bg-gray-900,
+:root[data-app-bg="light"] .bg-gray-800,
+:root[data-app-bg="light"] .bg-gray-700,
+:root[data-app-bg="light"] [class*="bg-slate-900/"],
+:root[data-app-bg="light"] [class*="bg-slate-800/"],
+:root[data-app-bg="light"] [class*="bg-slate-700/"],
+:root[data-app-bg="light"] [class*="bg-gray-900/"],
+:root[data-app-bg="light"] [class*="bg-gray-800/"],
+:root[data-app-bg="light"] [class*="bg-gray-700/"] {
+  background: #ffffff !important;
+}
+:root[data-app-bg="light"] .app-root > :not(aside) table,
+:root[data-app-bg="light"] .app-root > :not(aside) thead,
+:root[data-app-bg="light"] .app-root > :not(aside) tbody,
+:root[data-app-bg="light"] .app-root > :not(aside) tr,
+:root[data-app-bg="light"] .app-root > :not(aside) th,
+:root[data-app-bg="light"] .app-root > :not(aside) td {
+  background: #ffffff !important;
+}
+:root[data-app-bg="light"] [class*="bg-black/20"] {
+  background: rgba(0,0,0,0.06) !important;
+}
+:root[data-app-bg="light"] [class*="border-white/10"] {
+  border-color: #e5e7eb !important;
+}
+:root[data-app-bg="light"] [class*="text-slate-200"],
+:root[data-app-bg="light"] [class*="text-gray-200"],
+:root[data-app-bg="light"] [class*="text-zinc-200"] {
+  color: #374151 !important; /* slate-700 */
+}
+:root[data-app-bg="light"] [class*="text-slate-300"],
+:root[data-app-bg="light"] [class*="text-gray-300"],
+:root[data-app-bg="light"] [class*="text-zinc-300"] {
+  color: #374151 !important; /* slate-700 */
+}
+:root[data-app-bg="light"] [class*="text-slate-400"],
+:root[data-app-bg="light"] [class*="text-gray-400"],
+:root[data-app-bg="light"] [class*="text-zinc-400"] {
+  color: #6b7280 !important; /* slate-500 */
+}
+:root[data-app-bg="light"] [class*="ring-white/10"],
+:root[data-app-bg="light"] [class*="ring-white/25"] {
+  --tw-ring-color: rgba(229,231,235,1) !important; /* slate-200 */
+}
+:root[data-app-bg="light"] [class*="hover:bg-white/10"]:hover {
+  background: rgba(0,0,0,0.06) !important;
+}
+
+/* White or near-white fills should use dark text in light mode */
+:root[data-app-bg="light"] .bg-white,
+:root[data-app-bg="light"] [class*="bg-gray-50"],
+:root[data-app-bg="light"] [class*="bg-slate-50"],
+:root[data-app-bg="light"] [class*="bg-zinc-50"],
+:root[data-app-bg="light"] [class*="bg-neutral-50"],
+:root[data-app-bg="light"] [class*="bg-stone-50"] {
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Keep disabled controls readable in light mode */
+:root[data-app-bg="light"] [disabled],
+:root[data-app-bg="light"] [aria-disabled="true"],
+:root[data-app-bg="light"] .disabled {
+  color: #475569 !important; /* slate-600 */
+}
+/* Readability on pastel fills (badges/chips/buttons) in light mode */
+:root[data-app-bg="light"]
+  [class*="bg-slate-100"],
+  :root[data-app-bg="light"] [class*="bg-slate-200"],
+  :root[data-app-bg="light"] [class*="bg-gray-100"],
+  :root[data-app-bg="light"] [class*="bg-gray-200"],
+  :root[data-app-bg="light"] [class*="bg-zinc-100"],
+  :root[data-app-bg="light"] [class*="bg-zinc-200"],
+  :root[data-app-bg="light"] [class*="bg-neutral-100"],
+  :root[data-app-bg="light"] [class*="bg-neutral-200"],
+  :root[data-app-bg="light"] [class*="bg-stone-100"],
+  :root[data-app-bg="light"] [class*="bg-stone-200"],
+  :root[data-app-bg="light"] [class*="bg-red-100"],
+  :root[data-app-bg="light"] [class*="bg-red-200"],
+  :root[data-app-bg="light"] [class*="bg-rose-100"],
+  :root[data-app-bg="light"] [class*="bg-rose-200"],
+  :root[data-app-bg="light"] [class*="bg-orange-100"],
+  :root[data-app-bg="light"] [class*="bg-orange-200"],
+  :root[data-app-bg="light"] [class*="bg-amber-100"],
+  :root[data-app-bg="light"] [class*="bg-amber-200"],
+  :root[data-app-bg="light"] [class*="bg-yellow-100"],
+  :root[data-app-bg="light"] [class*="bg-yellow-200"],
+  :root[data-app-bg="light"] [class*="bg-lime-100"],
+  :root[data-app-bg="light"] [class*="bg-lime-200"],
+  :root[data-app-bg="light"] [class*="bg-green-100"],
+  :root[data-app-bg="light"] [class*="bg-green-200"],
+  :root[data-app-bg="light"] [class*="bg-emerald-100"],
+  :root[data-app-bg="light"] [class*="bg-emerald-200"],
+  :root[data-app-bg="light"] [class*="bg-teal-100"],
+  :root[data-app-bg="light"] [class*="bg-teal-200"],
+  :root[data-app-bg="light"] [class*="bg-cyan-100"],
+  :root[data-app-bg="light"] [class*="bg-cyan-200"],
+  :root[data-app-bg="light"] [class*="bg-sky-100"],
+  :root[data-app-bg="light"] [class*="bg-sky-200"],
+  :root[data-app-bg="light"] [class*="bg-blue-100"],
+  :root[data-app-bg="light"] [class*="bg-blue-200"],
+  :root[data-app-bg="light"] [class*="bg-indigo-100"],
+  :root[data-app-bg="light"] [class*="bg-indigo-200"],
+  :root[data-app-bg="light"] [class*="bg-violet-100"],
+  :root[data-app-bg="light"] [class*="bg-violet-200"],
+  :root[data-app-bg="light"] [class*="bg-purple-100"],
+  :root[data-app-bg="light"] [class*="bg-purple-200"],
+  :root[data-app-bg="light"] [class*="bg-fuchsia-100"],
+  :root[data-app-bg="light"] [class*="bg-fuchsia-200"],
+  :root[data-app-bg="light"] [class*="bg-pink-100"],
+  :root[data-app-bg="light"] [class*="bg-pink-200"] {
+  color: #0f172a !important; /* slate-900 for strong contrast */
+}
+/* Opacity-based colored fills (e.g., bg-emerald-600/15, bg-sky-500/20) */
+:root[data-app-bg="light"] [class*="bg-emerald-600/"],
+:root[data-app-bg="light"] [class*="bg-emerald-500/"],
+:root[data-app-bg="light"] [class*="bg-rose-600/"],
+:root[data-app-bg="light"] [class*="bg-rose-500/"],
+:root[data-app-bg="light"] [class*="bg-sky-600/"],
+:root[data-app-bg="light"] [class*="bg-sky-500/"],
+:root[data-app-bg="light"] [class*="bg-fuchsia-600/"],
+:root[data-app-bg="light"] [class*="bg-fuchsia-500/"],
+:root[data-app-bg="light"] [class*="bg-blue-600/"],
+:root[data-app-bg="light"] [class*="bg-blue-500/"] {
+  color: #0f172a !important;
+}
+
+/* Force common pastel text utilities to black globally in light mode */
+:root[data-app-bg="light"] [class*="text-emerald-"],
+:root[data-app-bg="light"] [class*="text-rose-"],
+:root[data-app-bg="light"] [class*="text-sky-"],
+:root[data-app-bg="light"] [class*="text-blue-"],
+:root[data-app-bg="light"] [class*="text-fuchsia-"],
+:root[data-app-bg="light"] [class*="text-cyan-"],
+:root[data-app-bg="light"] [class*="text-green-"],
+:root[data-app-bg="light"] [class*="text-amber-"] {
+  color: #0f172a !important;
+}
+/* Ensure icons/labels inside follow the text color */
+:root[data-app-bg="light"] [class*="bg-"].rounded-full svg,
+:root[data-app-bg="light"] [class*="bg-"].rounded-md svg,
+:root[data-app-bg="light"] [class*="bg-"].rounded svg {
+  fill: currentColor;
+  color: currentColor;
+}
+/* 3D card variant on light */
+:root[data-app-bg="light"] .card-3d {
+  background: #ffffff;
+  border: var(--card-border-width) solid var(--card-border-color, #e5e7eb);
+  box-shadow: 
+    0 0 0 1px color-mix(in srgb, var(--glow-color) 70%, transparent) inset,
+    0 0 18px 1px color-mix(in srgb, var(--glow-color) 38%, transparent) inset,
+    0 16px calc(var(--glow-soft-blur) + 12px) 0 color-mix(in srgb, var(--glow-color) 58%, transparent),
+    0 0 32px 3px color-mix(in srgb, var(--color-brand-fuchsia) 48%, transparent);
+  border-radius: var(--card-radius);
+}
+
+/*
+  Universal border mapping for boxes that use Tailwind border utilities.
+  This ensures KPI tiles, widgets, and inner panels inherit the chosen
+  card border color/width/radius without changing buttons/pills that
+  typically don't carry the 'border' class on rounded gradient surfaces.
+*/
+:root .border.border-white\/5,
+:root .border.border-white\/10,
+:root .border.border-white\/20,
+:root .border.border-white\/25,
+:root .border.border-white\/30 {
+  border-color: var(--card-border-color) !important;
+}
+
+/* Light mode: also remap common light borders */
+:root[data-app-bg="light"] .border.border-slate-100,
+:root[data-app-bg="light"] .border.border-slate-200,
+:root[data-app-bg="light"] .border.border-gray-200 {
+  border-color: var(--card-border-color, #e5e7eb) !important;
+}
+
+/* Propagate width/radius to bordered rounded containers (cards/tiles) */
+:root .rounded-2xl.border,
+:root .rounded-xl.border,
+:root .rounded-lg.border,
+:root .rounded-md.border {
+  border-width: var(--card-border-width) !important;
+  border-radius: var(--card-radius) !important;
+}
+
+/* Apply to ALL generic Tailwind `.border` elements (cards, tiles, inputs, panels) */
+:root .border {
+  border-color: var(--card-border-color) !important;
+  border-width: var(--card-border-width) !important;
 }
 
 /* Sidebar gradient surface with customizable angle */
@@ -78,16 +375,23 @@
 /* Glassmorphism surface */
 .glass {
   background: rgba(17, 25, 40, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+  border: var(--card-border-width) solid var(--card-border-color);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--glow-color) var(--glow-a1), transparent) inset,
+    0 6px var(--glow-soft-blur) 0 color-mix(in srgb, var(--glow-color) var(--glow-a2), transparent),
+    0 0 var(--glow-outer-blur) var(--glow-spread) color-mix(in srgb, var(--glow-color) var(--glow-a3), transparent),
+    0 10px 30px rgba(2, 6, 23, 0.45),
+    inset 0 1px 0 rgba(255,255,255,0.05);
   backdrop-filter: blur(10px);
+  border-radius: var(--card-radius);
 }
 
 /* 3D card look with soft rim-light */
 .card-3d {
   background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-  border: 1px solid rgba(255,255,255,0.08);
+  border: var(--card-border-width) solid var(--card-border-color);
   box-shadow: 0 8px 24px rgba(2,6,23,0.45), 0 2px 0 rgba(255,255,255,0.04) inset;
+  border-radius: var(--card-radius);
 }
 
 /* Neon glow for active items/buttons (uses theme vars) */
@@ -95,13 +399,87 @@
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--glow-color) var(--glow-a1), transparent) inset,
     0 6px var(--glow-soft-blur) 0 color-mix(in srgb, var(--glow-color) var(--glow-a2), transparent),
-    0 0 var(--glow-outer-blur) var(--glow-spread) color-mix(in srgb, var(--color-brand-fuchsia) var(--glow-a3), transparent);
+    0 0 var(--glow-outer-blur) var(--glow-spread) color-mix(in srgb, var(--color-brand-fuchsia) var(--glow-a3), transparent) !important;
 }
 
 /* Gradient pill for active sidebar link */
 .pill-active {
   background: linear-gradient(var(--brand-angle), var(--color-brand-primary), var(--color-brand-fuchsia));
   color: white;
+}
+
+/* Ensure opt-in glow remains visible on white content surfaces */
+:root[data-app-bg="light"] .app-root > :not(aside) .glow {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--glow-color) var(--glow-a1), transparent) inset,
+    0 8px calc(var(--glow-soft-blur) + 4px) 0 color-mix(in srgb, var(--glow-color) var(--glow-a2), transparent),
+    0 0 calc(var(--glow-outer-blur) + 4px) var(--glow-spread) color-mix(in srgb, var(--color-brand-fuchsia) var(--glow-a3), transparent) !important;
+}
+
+/* Light mode: apply visible glow to ALL bordered/ringed containers and ALL buttons in content */
+:root[data-app-bg="light"] .app-root > :not(aside) .border,
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="ring-"],
+:root[data-app-bg="light"] .app-root > :not(aside) button,
+:root[data-app-bg="light"] .app-root > :not(aside) .btn {
+  box-shadow:
+    /* crisp rim */
+    0 0 0 1px color-mix(in srgb, var(--glow-color) 70%, transparent) inset,
+    /* inner bloom (survives overflow-hidden) */
+    0 0 14px 1px color-mix(in srgb, var(--glow-color) 32%, transparent) inset,
+    /* soft drop bloom */
+    0 10px calc(var(--glow-soft-blur) + 6px) 0 color-mix(in srgb, var(--glow-color) 50%, transparent),
+    /* faint outer aura */
+    0 0 calc(var(--glow-outer-blur) + 8px) var(--glow-spread) color-mix(in srgb, var(--color-brand-fuchsia) 40%, transparent),
+    /* thin outer ring */
+    0 0 0 2px color-mix(in srgb, var(--glow-color) 26%, transparent) !important;
+}
+
+/* But keep white surfaces intact (no gray wash) */
+:root[data-app-bg="light"] .app-root > :not(aside) .border {
+  background: inherit;
+}
+
+/* Map Tailwind ring utilities to a branded ring color in light mode */
+:root[data-app-bg="light"] .app-root > :not(aside) [class*="ring-"] {
+  --tw-ring-color: color-mix(in srgb, var(--glow-color) 50%, rgba(229,231,235,1)) !important;
+}
+
+/* Stronger, rounded-card glow so borders read clearly on white */
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-md.border,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-lg.border,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-xl.border,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-2xl.border,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-md[class*="ring-"],
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-lg[class*="ring-"],
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-xl[class*="ring-"],
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-2xl[class*="ring-"] {
+  position: relative;
+  isolation: isolate; /* keep the bloom tight to the card */
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--glow-color) 70%, transparent) inset,
+    0 0 16px 1px color-mix(in srgb, var(--glow-color) 36%, transparent) inset,
+    0 14px calc(var(--glow-soft-blur) + 10px) 0 color-mix(in srgb, var(--glow-color) 55%, transparent),
+    0 0 28px 2px color-mix(in srgb, var(--color-brand-fuchsia) 45%, transparent) !important;
+}
+
+/* Add an outer glow layer via pseudo-element to avoid clipping and increase visibility */
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-md.border::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-lg.border::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-xl.border::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-2xl.border::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-md[class*="ring-"]::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-lg[class*="ring-"]::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-xl[class*="ring-"]::after,
+:root[data-app-bg="light"] .app-root > :not(aside) .rounded-2xl[class*="ring-"]::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  box-shadow:
+    0 18px 48px color-mix(in srgb, var(--glow-color) 28%, transparent),
+    0 0 42px color-mix(in srgb, var(--color-brand-fuchsia) 22%, transparent);
 }
 
 /* Minimal thin scrollbar */

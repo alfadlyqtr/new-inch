@@ -75,6 +75,17 @@ export default function AppLayout() {
     { code: "bn", label: "BN" },
   ]
   const hideNav = location.pathname === "/setup"
+
+  // Apply saved BG-only mode ASAP to avoid flash before settings load
+  useEffect(() => {
+    try {
+      const ls = window.localStorage
+      const bg = ls.getItem('appBg') || ls.getItem('inch_app_bg')
+      if (bg === 'light' || bg === 'dark') {
+        document.documentElement.setAttribute('data-app-bg', bg)
+      }
+    } catch {}
+  }, [])
   useEffect(() => {
     const handler = (l) => setLng(l)
     i18n.on("languageChanged", handler)
@@ -298,6 +309,20 @@ export default function AppLayout() {
             const gc = typeof glow.color === "string" ? glow.color : undefined
             const gd = Number.isFinite(glow.depth) ? glow.depth : 60
             applyGlow(gm, gc, gd)
+            // Apply background-only mode (light/dark) without altering sidebar/buttons
+            // Hydrate BG-only mode: prefer a previously saved local value
+            let bg = (appr.bg_mode === 'light') ? 'light' : 'dark'
+            try {
+              const ls = window.localStorage
+              const saved = ls.getItem('appBg') || ls.getItem('inch_app_bg')
+              if (saved === 'light' || saved === 'dark') bg = saved
+            } catch {}
+            setBgMode(bg)
+            try {
+              document.documentElement.setAttribute('data-app-bg', bg)
+              localStorage.setItem('appBg', bg)
+              localStorage.setItem('inch_app_bg', bg)
+            } catch {}
           }
         } catch {
           /* ignore */
@@ -608,7 +633,7 @@ export default function AppLayout() {
 
   return (
     <PermissionProvider owner={ownerForProvider} permissions={staffPerms || {}}>
-    <div className="min-h-screen bg-app text-slate-200 flex thin-scrollbar">
+    <div className="min-h-screen bg-app flex thin-scrollbar app-root">
       {/* Sidebar */}
       {!hideNav && (
         <aside className={`${collapsed ? "w-20" : "w-80"} relative sticky top-6 h-[88vh] overflow-visible px-2 mx-3 z-20`}>
@@ -710,7 +735,7 @@ export default function AppLayout() {
       )}
 
       {/* Content */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 content-root">
         <main className="max-w-7xl mx-auto p-6">
           <Outlet />
         </main>

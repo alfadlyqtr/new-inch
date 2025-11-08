@@ -165,7 +165,7 @@ const defaultSettings = {
 }
 
 export default function EnhancedPublicProfileSettings() {
-  const AUTOSAVE_ENABLED = false
+  const AUTOSAVE_ENABLED = true
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveNotice, setSaveNotice] = useState("")
@@ -300,6 +300,20 @@ export default function EnhancedPublicProfileSettings() {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileData, hydrated, loading])
+
+  // Immediate save when assistant enabled/disabled toggled
+  useEffect(() => {
+    if (!AUTOSAVE_ENABLED) return
+    if (loading || !hydrated) return
+    // Save promptly when chatbot.enabled changes so public page reflects it fast
+    try {
+      // Only proceed if key exists (user interacted)
+      if (typeof profileData?.chatbot?.enabled !== 'undefined') {
+        handleSave(false)
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileData?.chatbot?.enabled])
 
   async function handleSave(showSpinner = true) {
     if (!business?.id) return
@@ -454,7 +468,7 @@ export default function EnhancedPublicProfileSettings() {
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen} title="Public Profile Preview">
-        <PublicProfilePreview business={{ ...business, logo_url: logoUrl || business?.logo_url, public_profile_settings: profileData }} />
+        <PublicProfilePreview business={{ ...business, logo_url: logoUrl || business?.logo_url, public_profile_settings: { ...profileData, preview_force_assistant: true } }} />
       </Dialog>
     </div>
   )

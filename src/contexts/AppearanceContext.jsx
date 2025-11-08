@@ -55,6 +55,18 @@ export const AppearanceProvider = ({ children }) => {
     root.style.setProperty('--glow-a3', `${a3}%`);
     root.style.setProperty('--glow-soft-blur', `${soft}px`);
     root.style.setProperty('--glow-outer-blur', `${outer}px`);
+
+    // Card/widget border customization (color, width, radius)
+    const borders = appearance.borders || {}
+    const bColor = borders.color || null
+    const bWidth = Number.isFinite(borders.width) ? borders.width : null
+    const bRadius = Number.isFinite(borders.radius) ? borders.radius : null
+    if (typeof bColor === 'string') root.style.setProperty('--card-border-color', bColor)
+    else root.style.removeProperty('--card-border-color')
+    if (bWidth != null) root.style.setProperty('--card-border-width', `${Math.max(0, bWidth)}px`)
+    else root.style.removeProperty('--card-border-width')
+    if (bRadius != null) root.style.setProperty('--card-radius', `${Math.max(0, bRadius)}px`)
+    else root.style.removeProperty('--card-radius')
   }, [appearance]);
 
   const updateAppearance = (updates) => {
