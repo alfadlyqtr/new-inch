@@ -90,7 +90,14 @@ export default function NewCustomer() {
         {!ids.business_id && (
           <div className="mb-3 text-amber-400 text-sm">Loading account context…</div>
         )}
-        <NewCustomerForm ready={!!ids.business_id} businessName={businessName} onSave={handleSave} onCancel={() => window.history.back()} />
+        <NewCustomerForm
+          ready={!!ids.business_id}
+          businessName={businessName}
+          businessId={ids.business_id}
+          businessPrefix={(businessName || '').replace(/\s+/g,'').toUpperCase().slice(0,3)}
+          onSave={handleSave}
+          onCancel={() => window.history.back()}
+        />
       </div>
     </div>
   )

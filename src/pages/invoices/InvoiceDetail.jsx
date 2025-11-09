@@ -75,6 +75,7 @@ export default function InvoiceDetail(){
   }, [id])
 
   const totals = useMemo(() => inv?.totals || {}, [inv])
+  const currency = useMemo(() => (inv?.currency || inv?.totals?.currency || 'SAR'), [inv])
 
   function onPrint(){ try { window.print() } catch {} }
   function onDownload(){
@@ -153,10 +154,10 @@ export default function InvoiceDetail(){
                   </td>
                   <td className="px-3 py-2 text-right">{Number(it.qty||0)}</td>
                   <td className="px-3 py-2 text-right">{it.unit || ''}</td>
-                  <td className="px-3 py-2 text-right"><Amount v={it.unit_price} c={inv.currency} /></td>
+                  <td className="px-3 py-2 text-right"><Amount v={it.unit_price} c={currency} /></td>
                   <td className="px-3 py-2 text-right">{it.discount != null ? Number(it.discount||0).toFixed(2) : '—'}</td>
                   <td className="px-3 py-2 text-right">{it.tax_code || '—'}</td>
-                  <td className="px-3 py-2 text-right"><Amount v={it.line_total} c={inv.currency} /></td>
+                  <td className="px-3 py-2 text-right"><Amount v={it.line_total} c={currency} /></td>
                 </tr>
               ))}
             </tbody>
@@ -169,27 +170,27 @@ export default function InvoiceDetail(){
         <div className="w-full max-w-sm text-sm text-white/85">
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Subtotal','الإجمالي الفرعي')}</div>
-            <div className="font-medium"><Amount v={totals.subtotal ?? totals.line_subtotal} c={inv.currency} /></div>
+            <div className="font-medium"><Amount v={totals.subtotal ?? totals.line_subtotal} c={currency} /></div>
           </div>
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Discount','الخصم')}</div>
-            <div className="font-medium"><Amount v={totals.discount_total} c={inv.currency} /></div>
+            <div className="font-medium"><Amount v={totals.discount_total} c={currency} /></div>
           </div>
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Tax','الضريبة')}</div>
-            <div className="font-medium"><Amount v={totals.tax_total ?? totals.tax} c={inv.currency} /></div>
+            <div className="font-medium"><Amount v={totals.tax_total ?? totals.tax} c={currency} /></div>
           </div>
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Total','الإجمالي')}</div>
-            <div className="font-semibold"><Amount v={totals.grand_total ?? totals.total} c={inv.currency} /></div>
+            <div className="font-semibold"><Amount v={totals.grand_total ?? totals.total} c={currency} /></div>
           </div>
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Paid','المدفوع')}</div>
-            <div className="font-medium"><Amount v={totals.amount_paid} c={inv.currency} /></div>
+            <div className="font-medium"><Amount v={totals.amount_paid} c={currency} /></div>
           </div>
           <div className="flex items-center justify-between py-1">
             <div className="text-white/70">{t('Balance Due','المتبقي')}</div>
-            <div className="font-semibold"><Amount v={totals.balance_due} c={inv.currency} /></div>
+            <div className="font-semibold"><Amount v={totals.balance_due} c={currency} /></div>
           </div>
         </div>
       </div>
@@ -215,7 +216,7 @@ export default function InvoiceDetail(){
                   <tr key={p.id} className="border-t border-white/10">
                     <td className="px-3 py-2">{p.paid_at ? new Date(p.paid_at).toLocaleString() : '—'}</td>
                     <td className="px-3 py-2 capitalize">{String(p.method||'').replace(/_/g,' ')}</td>
-                    <td className="px-3 py-2 text-right"><Amount v={p.amount} c={p.currency || inv.currency} /></td>
+                    <td className="px-3 py-2 text-right"><Amount v={p.amount} c={p.currency || currency} /></td>
                     <td className="px-3 py-2">{p.reference || '—'}</td>
                   </tr>
                 ))}

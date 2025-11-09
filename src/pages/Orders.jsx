@@ -242,7 +242,9 @@ export default function Orders() {
             .eq('user_id', ids.users_app_id)
             .maybeSingle()
           const inv = us?.invoice_settings || {}
-          setInvoiceCfg({ currency: inv.currency || 'SAR', vat_percent: Number(inv.vat_percent || inv.tax_rate || 0) || 0, rounding: inv.rounding || 'none' })
+          const curRaw = inv.currency || 'SAR'
+          const cur = (String(curRaw).match(/[A-Z]{3}/) || [curRaw])[0] || 'SAR'
+          setInvoiceCfg({ currency: cur, vat_percent: Number(inv.vat_percent || inv.tax_rate || 0) || 0, rounding: inv.rounding || 'none' })
         }
       } catch {}
     })()
@@ -442,7 +444,9 @@ export default function Orders() {
         const walkUnit = Number(priceBook?.fabrics_walkin?.default_unit_price || 0)
         const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: mVals, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: optionsSel, inventoryItems, priceBook, settings: invoiceCfg })
         const t = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
-        totals = { lineItems: [], subtotal: t.subtotal, tax: t.tax, total: t.total, taxRate: Number(invoiceCfg.vat_percent||0) }
+        const unitPrice = qty > 0 ? Number((priced.subtotal || 0) / qty) : Number(priced.subtotal || 0)
+        const displayName = gKey === 'sirwal' || gKey === 'falina' ? 'Sirwal' : 'Thobe'
+        totals = { lineItems: [{ name: displayName, qty, unit_price: unitPrice, amount: Number(priced.subtotal||0) }], subtotal: t.subtotal, tax: t.tax, total: t.total, taxRate: Number(invoiceCfg.vat_percent||0) }
         // Persist fabric_sku_id if we resolved one
         if (fabricItem) {
           o.items = { ...(o.items||{}), fabric_sku_id: fabricItem.id }
@@ -458,6 +462,7 @@ export default function Orders() {
         customer_id: cust.id,
         customer_name: o.customer_name || cust.name,
         status: 'draft',
+        currency: invoiceCfg?.currency || 'SAR',
         items: o.items || {},
         measurements: {
           thobe: thSnap ? { key: thKey, data: thSnap } : null,
@@ -476,7 +481,7 @@ export default function Orders() {
       // If invoice already exists for this order, update it; otherwise create new
       const { data: existingInv } = await supabase
         .from('invoices')
-        .select('id, items, totals, issued_at, status')
+        .select('id, items, totals, issued_at, status, currency')
         .eq('order_id', o.id)
         .maybeSingle()
       let finalInvoiceId = null
@@ -484,7 +489,8 @@ export default function Orders() {
         // Skip update if nothing changed since last invoice
         const sameItems = stableStringify(existingInv.items||{}) === stableStringify(payload.items||{})
         const sameTotals = stableStringify(existingInv.totals||{}) === stableStringify(payload.totals||{})
-        if (sameItems && sameTotals) {
+        const sameCurrency = (existingInv.currency || existingInv.totals?.currency || null) === (payload.currency || payload.totals?.currency || null)
+        if (sameItems && sameTotals && sameCurrency) {
           // No changes, just redirect
           finalInvoiceId = existingInv.id
           navigate(`/bo/invoices/${finalInvoiceId}`)
@@ -568,7 +574,7 @@ export default function Orders() {
       const firstSirwalUnit = totals.lineItems.find(li => li.name === 'Sirwal')?.unit_price || null
       const firstFalinaUnit = totals.lineItems.find(li => li.name === 'Falina')?.unit_price || null
       const ordUpdate = {
-        currency: (inv?.currency_code || null) || null,
+        currency: (payload?.totals?.currency || 'SAR'),
         unit_price_thobe: firstThUnit,
         unit_price_sirwal: firstSirwalUnit,
         unit_price_falina: firstFalinaUnit,
@@ -603,7 +609,8 @@ export default function Orders() {
     notes: "",
   })
 
-  const [useNewCustomer, setUseNewCustomer] = useState(false)
+  // null = not chosen yet (force user to decide Existing vs New)
+  const [useNewCustomer, setUseNewCustomer] = useState(null)
   const [newCustomer, setNewCustomer] = useState({ name: "", phone: "" })
   const [formError, setFormError] = useState("")
 
@@ -697,11 +704,31 @@ export default function Orders() {
   }
   const selectedCustomer = React.useMemo(() => customers.find(c => c.id === form.customer_id) || null, [customers, form.customer_id])
 
+  // Helper: determine if the current draft is empty (safe to auto-delete on cancel)
+  const isDraftEmpty = React.useCallback(() => {
+    const hasCustomer = !!form.customer_id
+    const hasQty = (Number(form.quantity_thobe)||0) > 0 || (Number(form.quantity_sirwal)||0) > 0 || (extraThobes||[]).length > 0
+    const hasMeasurements = Object.keys(thobeM||{}).length > 0 || Object.keys(sirwalM||{}).length > 0
+    const hasNotes = String(form.notes||'').trim().length > 0
+    return !hasCustomer && !hasQty && !hasMeasurements && !hasNotes
+  }, [form.customer_id, form.quantity_thobe, form.quantity_sirwal, form.notes, thobeM, sirwalM, extraThobes])
+
+  async function closeOrderDialog(){
+    // If a draft exists and nothing meaningful was entered, delete it
+    try {
+      if (open && draftOrderId && isDraftEmpty()) {
+        await supabase.from('orders').delete().eq('id', draftOrderId)
+      }
+    } catch {}
+    setOpen(false)
+    setDraftOrderId(null)
+  }
+
   // Small overlay markers for mini diagrams (green '#')
   function MiniMarkers({ map = {}, values = {}, keys = [] }){
     const actives = (keys||[]).filter(k => values?.[k] != null && values?.[k] !== '')
     return (
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none z-10">
         {actives.map(k => {
           const pos = map[k]
           if (!pos) return null
@@ -710,7 +737,7 @@ export default function Orders() {
           return (
             <span
               key={k}
-              className="absolute px-1.5 py-0.5 rounded bg-slate-950/90 border border-emerald-400 text-emerald-200 text-[10px] font-mono select-none shadow-md"
+              className="absolute px-2 py-0.5 rounded-md bg-black/90 border border-emerald-400 text-emerald-100 text-[12px] font-mono select-none shadow-lg ring-1 ring-black/50"
               style={{ left: `${pos.x}%`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}
               title={labelize(k)}
             >{val}</span>
@@ -926,6 +953,10 @@ export default function Orders() {
     if (form.customer_id && typeof formError === 'string' && formError.toLowerCase().includes('customer')) {
       setFormError('')
     }
+    // If a customer is selected (including just-created), ensure mode reflects Existing
+    if (form.customer_id && useNewCustomer !== false) {
+      setUseNewCustomer(false)
+    }
   }, [form.customer_id])
 
   async function loadOrders(){
@@ -976,6 +1007,7 @@ export default function Orders() {
         await supabase.from('orders').update({ customer_id: ins.id, customer_name: ins.name }).eq('id', draftOrderId)
       }
     } catch {}
+    // After creating, switch UI to Existing mode with the new customer preselected
     setUseNewCustomer(false)
     setNewCustOpen(false)
   }
@@ -1037,43 +1069,15 @@ export default function Orders() {
 
   async function openCreate(){
     setForm({ customer_id: "", garment_category: "", quantity_thobe: 0, quantity_sirwal: 0, due_date: "", notes: "" })
-    setUseNewCustomer(false)
+    setUseNewCustomer(null)
     setNewCustomer({ name: "", phone: "" })
     // Clear any stale in-memory measurement state for a fresh order (no cross orders)
     setThobeM({}); setSirwalM({}); setMeasureValues({}); setThobeVer(v=>v+1); setSirwalVer(v=>v+1)
     setExtraThobes([])
     setExtraMode(false)
     setFormError("")
-    // Create a draft order immediately, linked to current business
-    let resolvedBizId = ids.business_id
-    if (!resolvedBizId) {
-      try {
-        const { data: sess } = await supabase.auth.getSession()
-        const user = sess?.session?.user
-        if (user) {
-          const { data: ua } = await supabase
-            .from('users_app')
-            .select('business_id')
-            .eq('auth_user_id', user.id)
-            .maybeSingle()
-          if (ua?.business_id) { resolvedBizId = ua.business_id; setIds({ business_id: ua.business_id, user_id: user.id }) }
-        }
-      } catch {}
-    }
-    if (!resolvedBizId) { setFormError('Business is not initialized yet. Please try again.'); return }
-    try {
-      const payload = { business_id: resolvedBizId, customer_id: null, customer_name: null, status: 'draft', items: {}, notes: null }
-      const { data: ins, error } = await supabase
-        .from('orders')
-        .insert(payload)
-        .select('id')
-        .single()
-      if (error) throw error
-      setDraftOrderId(ins.id)
-      setOpen(true)
-    } catch (e) {
-      setFormError(`Could not start a new order. ${e?.message || ''}`)
-    }
+    setDraftOrderId(null)
+    setOpen(true)
   }
 
   // When user selects an existing customer, link it to the draft order immediately (no cross orders)
@@ -1101,7 +1105,9 @@ export default function Orders() {
       if (hasThobeM || hasThobeQty) inferredCategory = 'thobe'
       else if (hasSirwalM || hasSirwalQty) inferredCategory = 'sirwal_falina'
     }
+    if (useNewCustomer == null) { setFormError('Choose customer mode: Existing or New'); return }
     if (!useNewCustomer && !form.customer_id) { setFormError('Please select a customer'); return }
+    if (!form.due_date) { setFormError('Please select a due date'); return }
     try {
       setSaving(true)
       // Ensure business_id is available; resolve locally for this save
@@ -1126,10 +1132,28 @@ export default function Orders() {
       // Resolve customer id from current selection to avoid empty string edge cases
       let customerId = (customers.find(c => c.id === form.customer_id)?.id) || (form.customer_id || '').trim() || null
       if (!useNewCustomer && (!customerId || customerId.length < 5)) { setFormError('Please select a customer.'); setSaving(false); return }
-      // If we have the selected customer's business_id, prefer that for payload to satisfy composite FKs
-      const selCust = customers.find(c => c.id === customerId)
-      if (selCust?.business_id) {
-        resolvedBizId = selCust.business_id
+      // Verify the customer actually exists in DB and prefer its business_id to satisfy FKs
+    if (!resolvedBizId && ids?.business_id) {
+      resolvedBizId = ids.business_id
+    }
+      try {
+        const { data: dbCust, error: dbCustErr } = await supabase.from('customers').select('id,business_id,name,phone').eq('id', customerId).maybeSingle()
+        if (dbCustErr) throw dbCustErr
+        if (!dbCust) {
+          setFormError('Selected customer was not found. Please reselect the customer and try again.');
+          setSaving(false)
+          return
+        }
+        if (dbCust.business_id) {
+          resolvedBizId = dbCust.business_id
+        } else if (resolvedBizId) {
+          // Auto-link orphan customer to this business to satisfy FKs
+          try {
+            await supabase.from('customers').update({ business_id: resolvedBizId }).eq('id', dbCust.id)
+          } catch {}
+        }
+      } catch (e) {
+        // If lookup fails, still proceed with current values but warn in case of FK failures
       }
       let customerName = null
       if (useNewCustomer) {
@@ -1493,7 +1517,7 @@ export default function Orders() {
                   <span className="ml-2 inline-flex items-center gap-1 text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded-full align-middle"># {short(draftOrderId)}</span>
                 )}
               </div>
-              <button onClick={()=> setOpen(false)} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
+              <button onClick={closeOrderDialog} className="px-2 py-1 rounded bg-white/10 border border-white/10">✕</button>
             </div>
             {formError && (
               <div className="mt-2 rounded border border-amber-300/40 bg-amber-500/10 text-amber-200 text-xs px-3 py-2">
@@ -1502,14 +1526,14 @@ export default function Orders() {
             )}
             <div className="mt-2 space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
               <div>
-                <label className="block text-sm text-white/70 mb-1">{t('orders.form.customer', { defaultValue: 'Customer' })}</label>
+                <label className="block text-sm text-white/70 mb-1">{t('orders.form.customer', { defaultValue: 'Customer' })} <span className="text-red-400">*</span></label>
                 <div className="flex items-center gap-4 mb-2">
                   <label className="flex items-center gap-2 text-white/80">
-                    <input type="radio" name="custMode" value="existing" checked={!useNewCustomer} onChange={()=> setUseNewCustomer(false)} />
+                    <input type="radio" name="custMode" value="existing" checked={useNewCustomer===false} onChange={()=> setUseNewCustomer(false)} aria-required="true" />
                     <span>{t('orders.form.existing', { defaultValue: 'Existing' })}</span>
                   </label>
                   <label className="flex items-center gap-2 text-white/80">
-                    <input type="radio" name="custMode" value="new" checked={useNewCustomer} onChange={()=> setUseNewCustomer(true)} />
+                    <input type="radio" name="custMode" value="new" checked={useNewCustomer===true} onChange={()=> setUseNewCustomer(true)} aria-required="true" />
                     <span>{t('orders.form.new', { defaultValue: 'New' })}</span>
                   </label>
                 </div>
@@ -1517,15 +1541,19 @@ export default function Orders() {
                   <select
                     value={form.customer_id}
                     onChange={(e)=> { setForm(f => ({ ...f, customer_id: e.target.value })); if (formError && formError.toLowerCase().includes('customer')) setFormError('') }}
-                    className="flex-1 rounded bg-white border border-white/10 px-3 py-2 text-sm text-black"
+                    className="flex-1 rounded bg-white border border-white/10 px-3 py-2 text-sm text-black disabled:opacity-60"
+                    disabled={useNewCustomer!==false}
                   >
                     <option value="">{t('orders.form.selectCustomer', { defaultValue: 'Select customer…' })}</option>
                     {customers.map(c => (
                       <option key={c.id} value={c.id}>{c.name || 'Unnamed'} {c.phone ? `(${c.phone})` : ''}</option>
                     ))}
                   </select>
-                  <button type="button" onClick={()=> setNewCustOpen(true)} className="rounded bg-white/10 border border-white/15 text-white/85 px-3 py-2 text-sm hover:bg-white/15">{t('orders.form.newCustomer', { defaultValue: 'New Customer' })}</button>
+                  <button type="button" onClick={()=> { if (useNewCustomer===true) setNewCustOpen(true) }} disabled={useNewCustomer!==true} className="rounded bg-white/10 border border-white/15 text-white/85 px-3 py-2 text-sm hover:bg-white/15 disabled:opacity-60">{t('orders.form.newCustomer', { defaultValue: 'New Customer' })}</button>
                 </div>
+                {useNewCustomer==null && (
+                  <div className="text-xs text-amber-300 mt-1">{t('orders.form.chooseCustomerMode', { defaultValue: 'Choose Existing or New to continue.' })}</div>
+                )}
                 {selectedCustomer && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/70">
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/85">
@@ -1588,14 +1616,20 @@ export default function Orders() {
               {/* Due date */}
               <div className="grid grid-cols-2 gap-4 mt-2">
                 <div>
-                  <label className="block text-sm text-white/70 mb-1">{t('orders.form.dueDate', { defaultValue: 'Due date' })}</label>
+                  <label className="block text-sm text-white/70 mb-1">{t('orders.form.dueDate', { defaultValue: 'Due date' })} <span className="text-red-400">*</span></label>
                   <input
                     type="date"
                     value={form.due_date}
                     onChange={(e)=> setForm(f => ({ ...f, due_date: e.target.value }))}
                     className="w-full rounded bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
                     min={new Date().toISOString().slice(0,10)}
+                    required
+                    aria-required="true"
+                    aria-invalid={!!(formError && formError.toLowerCase().includes('due date'))}
                   />
+                  {formError && formError.toLowerCase().includes('due date') && (
+                    <div className="mt-1 text-xs text-amber-300">{formError}</div>
+                  )}
                 </div>
               </div>
 
@@ -1848,7 +1882,7 @@ export default function Orders() {
 
             {measureOpen && (
               <div className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm" onClick={(e)=> { /* do not close on outside click */ e.stopPropagation() }}>
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-5xl h-[86vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl p-4 overflow-hidden" onClick={(e)=> e.stopPropagation()}>
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-5xl h-[86vh] rounded-2xl border border-white/40 bg-slate-950 shadow-2xl p-4 overflow-hidden" onClick={(e)=> e.stopPropagation()}>
                   {measureType === 'thobe' ? (
                     <ThobeWizard
                       key={`${form.customer_id || 'no-cust'}-thobe-${thobeVer}`}

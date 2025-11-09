@@ -5,7 +5,7 @@ export default function PaymentModal({ invoice, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [method, setMethod] = useState("cash")
   const [amount, setAmount] = useState("")
-  const [currency, setCurrency] = useState(invoice?.totals?.currency || "SAR")
+  const [currency, setCurrency] = useState(invoice?.currency || invoice?.totals?.currency || "SAR")
   const [exchangeRate, setExchangeRate] = useState("")
   const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0,16)) // local yyyy-MM-ddTHH:mm
   const [reference, setReference] = useState("")

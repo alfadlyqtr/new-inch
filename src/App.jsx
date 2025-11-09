@@ -5,6 +5,8 @@ import StaffLayout from "./layouts/StaffLayout.jsx"
 import AdminLayout from "./layouts/AdminLayout.jsx"
 import { supabase } from "./lib/supabaseClient.js"
 import { AppearanceProvider } from "./contexts/AppearanceContext"
+import AppearanceHydrator from "./components/AppearanceHydrator.jsx"
+import PublicAppearanceInit from "./components/PublicAppearanceInit.jsx"
 
 const Dashboard = React.lazy(() => import("./pages/Dashboard.jsx"))
 const Auth = React.lazy(() => import("./pages/Auth.jsx"))
@@ -390,9 +392,9 @@ function SmartDashboardRedirect() {
 
 function App() {
   return (
-    <AppearanceProvider>
-      <BrowserRouter>
-        <Routes>
+    <BrowserRouter>
+      <PublicAppearanceInit />
+      <Routes>
         {/* Public home at "/" */}
         <Route path="/" element={
           <Suspense fallback={<div>Loading...</div>}>
@@ -435,7 +437,12 @@ function App() {
             <StaffSetup />
           </Suspense>
         } />
-        <Route path="/bo" element={<BoLayout />}>
+        <Route path="/bo" element={(
+          <AppearanceProvider>
+            <AppearanceHydrator />
+            <BoLayout />
+          </AppearanceProvider>
+        )}>
           <Route path="dashboard" element={
             <Suspense fallback={<div>Loading...</div>}>
               <Dashboard />
@@ -517,7 +524,12 @@ function App() {
             </Suspense>
           } />
         </Route>
-        <Route path="/staff" element={<StaffLayout />}>
+        <Route path="/staff" element={(
+          <AppearanceProvider>
+            <AppearanceHydrator />
+            <StaffLayout />
+          </AppearanceProvider>
+        )}>
           <Route path="dashboard" element={
             <Suspense fallback={<div>Loading...</div>}>
               <PunchInGate>
@@ -662,9 +674,8 @@ function App() {
             <NotFound />
           </Suspense>
         } />
-        </Routes>
-      </BrowserRouter>
-    </AppearanceProvider>
+      </Routes>
+    </BrowserRouter>
   )
 }
 

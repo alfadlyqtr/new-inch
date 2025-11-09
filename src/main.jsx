@@ -4,12 +4,19 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
-// Apply saved BG-only mode synchronously BEFORE React renders to prevent dark flash
+// Apply BG mode synchronously BEFORE React renders
 try {
+  const path = window.location?.pathname || '/'
+  const isPrivateRoute = /^\/(bo|staff)(\/|$)|^\/dashboard(\/|$)|^\/pending-approval(\/|$)|^\/setup(\/|$)/.test(path)
   const ls = window.localStorage
-  const earlyBg = ls.getItem('appBg') || ls.getItem('inch_app_bg')
-  if (earlyBg === 'light' || earlyBg === 'dark') {
-    document.documentElement.setAttribute('data-app-bg', earlyBg)
+  if (!isPrivateRoute) {
+    document.documentElement.setAttribute('data-app-bg', 'dark')
+    try { ls.setItem('appBg', 'dark'); ls.setItem('inch_app_bg', 'dark') } catch {}
+  } else {
+    const earlyBg = ls.getItem('appBg') || ls.getItem('inch_app_bg')
+    if (earlyBg === 'light' || earlyBg === 'dark') {
+      document.documentElement.setAttribute('data-app-bg', earlyBg)
+    }
   }
 } catch {}
 

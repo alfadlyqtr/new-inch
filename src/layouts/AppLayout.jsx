@@ -296,7 +296,7 @@ export default function AppLayout() {
             i18n.changeLanguage(lngPref)
             document.documentElement.setAttribute('lang', lngPref)
           }
-          // Apply per-user appearance
+          // Apply per-user appearance (PRIORITY)
           const appr = us?.appearance_settings || null
           if (appr) {
             const t = appr.theme || "purple"
@@ -309,20 +309,24 @@ export default function AppLayout() {
             const gc = typeof glow.color === "string" ? glow.color : undefined
             const gd = Number.isFinite(glow.depth) ? glow.depth : 60
             applyGlow(gm, gc, gd)
-            // Apply background-only mode (light/dark) without altering sidebar/buttons
-            // Hydrate BG-only mode: prefer a previously saved local value
-            let bg = (appr.bg_mode === 'light') ? 'light' : 'dark'
-            try {
-              const ls = window.localStorage
-              const saved = ls.getItem('appBg') || ls.getItem('inch_app_bg')
-              if (saved === 'light' || saved === 'dark') bg = saved
-            } catch {}
+            // Apply background-only mode strictly from DB (do NOT override with localStorage)
+            const bg = (appr.bg_mode === 'light') ? 'light' : 'dark'
             setBgMode(bg)
             try {
               document.documentElement.setAttribute('data-app-bg', bg)
               localStorage.setItem('appBg', bg)
               localStorage.setItem('inch_app_bg', bg)
             } catch {}
+          }
+          // FALLBACK: if no appearance_settings in DB, optionally use localStorage
+          else {
+            try {
+              const ls = window.localStorage
+              const saved = ls.getItem('appBg') || ls.getItem('inch_app_bg')
+              const bg = (saved === 'light' || saved === 'dark') ? saved : 'dark'
+              setBgMode(bg)
+              document.documentElement.setAttribute('data-app-bg', bg)
+            } catch { /* ignore */ }
           }
         } catch {
           /* ignore */

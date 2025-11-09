@@ -784,25 +784,49 @@ export default function Inventory() {
       {/* Tabs */}
       <div className="flex border-b border-white/10 mb-6">
         <button
-          className={`px-4 py-2 font-medium ${tab === TABS.ITEMS ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-white/70 hover:text-white'}`}
+          role="tab"
+          aria-selected={tab === TABS.ITEMS}
+          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+            tab === TABS.ITEMS
+              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+          }`}
           onClick={() => setTab(TABS.ITEMS)}
         >
           Items
         </button>
         <button
-          className={`px-4 py-2 font-medium ${tab === TABS.SUPPLIERS ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-white/70 hover:text-white'}`}
+          role="tab"
+          aria-selected={tab === TABS.SUPPLIERS}
+          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+            tab === TABS.SUPPLIERS
+              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+          }`}
           onClick={() => setTab(TABS.SUPPLIERS)}
         >
           Suppliers
         </button>
         <button
-          className={`px-4 py-2 font-medium ${tab === TABS.RECEIPTS ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-white/70 hover:text-white'}`}
+          role="tab"
+          aria-selected={tab === TABS.RECEIPTS}
+          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+            tab === TABS.RECEIPTS
+              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+          }`}
           onClick={() => setTab(TABS.RECEIPTS)}
         >
           Receipts
         </button>
         <button
-          className={`px-4 py-2 font-medium ${tab === TABS.PRICING ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-white/70 hover:text-white'}`}
+          role="tab"
+          aria-selected={tab === TABS.PRICING}
+          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow active:translate-y-px ${
+            tab === TABS.PRICING
+              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+          }`}
           onClick={() => setTab(TABS.PRICING)}
         >
           Pricing
@@ -835,7 +859,7 @@ export default function Inventory() {
               </select>
               <button
                 onClick={() => setTab(TABS.PRICING)}
-                className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg transition-colors"
+                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 active:bg-white/20 text-white transition-colors shadow-sm hover:shadow ring-1 ring-inset ring-white/10 active:ring-white/20"
                 title="Open Pricing Management"
               >
                 Pricing Management

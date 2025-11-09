@@ -33,6 +33,25 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
   const [showTools, setShowTools] = useState(false)
   const [showLayers, setShowLayers] = useState(false)
 
+  // Palette that follows appearance (light/dark) via data-app-bg; react to changes
+  const [isLight, setIsLight] = useState(() => (typeof document !== 'undefined') && document.documentElement.getAttribute('data-app-bg') === 'light')
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const el = document.documentElement
+    const sync = () => setIsLight(el.getAttribute('data-app-bg') === 'light')
+    sync()
+    const mo = new MutationObserver(sync)
+    mo.observe(el, { attributes: true, attributeFilter: ['data-app-bg'] })
+    return () => mo.disconnect()
+  }, [])
+  const palette = {
+    labelBg: isLight ? 'rgba(255,255,255,0.97)' : 'rgba(0,0,0,0.95)',
+    labelText: isLight ? '#0f172a' : '#ffffff',
+    labelBorder: isLight ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)',
+    pillBg: isLight ? 'rgba(255,255,255,0.92)' : 'rgba(15,23,42,0.9)',
+    pillText: isLight ? '#0f172a' : '#ffffff',
+  }
+
   // Safe accessors for annotations arrays
   const aDims = () => Array.isArray(annotations?.dims) ? annotations.dims : []
   const aCircles = () => Array.isArray(annotations?.circles) ? annotations.circles : []
@@ -475,8 +494,8 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
                 <line x1={ax+tx*tick} y1={ay+ty*tick} x2={ax-tx*tick} y2={ay-ty*tick} stroke="#93c5fd" strokeWidth="2" />
                 <line x1={bx+tx*tick} y1={by+ty*tick} x2={bx-tx*tick} y2={by-ty*tick} stroke="#93c5fd" strokeWidth="2" />
                 {/* Label */}
-                <rect x={cx-20} y={cy-9} width="40" height="18" rx="3" fill={selectedDimId===d.id? 'rgba(59,130,246,0.35)' : 'rgba(15,23,42,0.9)'} stroke="rgba(255,255,255,0.5)" className="pointer-events-auto" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedDimId(d.id) }} />
-                <text x={cx} y={cy+4} textAnchor="middle" fontSize="10" fill="#fff" className="pointer-events-none">{label}</text>
+                <rect x={cx-30} y={cy-11} width="60" height="22" rx="4" fill={selectedDimId===d.id? 'rgba(59,130,246,0.45)' : palette.labelBg} stroke={palette.labelBorder} className="pointer-events-auto" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedDimId(d.id) }} />
+                <text x={cx} y={cy+5} textAnchor="middle" fontSize="12" fill={palette.labelText} className="pointer-events-none">{label}</text>
               </g>
             )
           })}
@@ -489,8 +508,8 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
                 <circle cx={cx} cy={cy} r={Math.max(6, r)} fill="none" stroke="#fcd34d" strokeWidth="2" strokeDasharray="4 3" className="cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedCircleId(prev => prev===c.id ? null : c.id) }} onDoubleClick={(e)=>{ e.stopPropagation(); const circles = aCircles().filter(x => x.id!==c.id); onAnnotationsChange?.({ ...(annotations||{}), circles }); setSelectedCircleId(null) }} />
                 {c.note && (
                   <>
-                    <rect x={cx + r + 6} y={cy - 9} width="60" height="18" rx="3" fill="rgba(15,23,42,1.0)" stroke="rgba(255,255,255,0.6)" />
-                    <text x={cx + r + 36} y={cy+4} textAnchor="middle" fontSize="10" fill="#fff">{c.note}</text>
+                    <rect x={cx + r + 6} y={cy - 11} width="80" height="22" rx="4" fill={palette.labelBg} stroke={palette.labelBorder} />
+                    <text x={cx + r + 46} y={cy+6} textAnchor="middle" fontSize="12" fill={palette.labelText}>{c.note}</text>
                   </>
                 )}
               </g>
@@ -515,8 +534,8 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
                 )}
                 {ar.text && (
                   <>
-                    <rect x={midx-20} y={midy-9} width="40" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
-                    <text x={midx} y={midy+4} textAnchor="middle" fontSize="10" fill="#fff">{ar.text}</text>
+                    <rect x={midx-28} y={midy-10} width="56" height="20" rx="4" fill={palette.labelBg} stroke={palette.labelBorder} />
+                    <text x={midx} y={midy+5} textAnchor="middle" fontSize="12" fill={palette.labelText}>{ar.text}</text>
                   </>
                 )}
               </g>
@@ -547,8 +566,8 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
             return (
               <g key={ag.id} className="pointer-events-auto cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedAngleId(ag.id) }}>
                 <path d={`M ${sx} ${sy} A ${r} ${r} 0 ${large} ${sweep} ${ex} ${ey}`} stroke="#93c5fd" strokeWidth="2" fill="none" />
-                <rect x={lx-16} y={ly-9} width="32" height="18" rx="3" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
-                <text x={lx} y={ly+4} textAnchor="middle" fontSize="10" fill="#fff">{deg}°</text>
+                <rect x={lx-20} y={ly-10} width="40" height="20" rx="4" fill={palette.labelBg} stroke={palette.labelBorder} />
+                <text x={lx} y={ly+5} textAnchor="middle" fontSize="12" fill={palette.labelText}>{deg}°</text>
               </g>
             )
           })}
@@ -557,8 +576,8 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
             const py = (n.p.yPct/100) * (box.h||1)
             return (
               <g key={n.id} className="pointer-events-auto cursor-pointer" onPointerDown={(e)=>{ e.stopPropagation(); setSelectedNoteId(n.id) }}>
-                <rect x={px-24} y={py-9} width="48" height="18" rx="9" fill="rgba(15,23,42,0.9)" stroke="rgba(255,255,255,0.5)" />
-                <text x={px} y={py+4} textAnchor="middle" fontSize="10" fill="#fff">{n.text || 'Note'}</text>
+                <rect x={px-24} y={py-9} width="48" height="18" rx="9" fill={palette.labelBg} stroke={palette.labelBorder} />
+                <text x={px} y={py+4} textAnchor="middle" fontSize="10" fill={palette.labelText}>{n.text || 'Note'}</text>
               </g>
             )
           })}
@@ -576,9 +595,7 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
         {/* Notes as DOM pills for better usability */}
         {layers.notes && aNotes().map((n) => (
           <div key={`${n.id}-pill`} className="absolute z-30" data-control="true" style={at(n.p.xPct, n.p.yPct)} onPointerDown={(e)=>{ e.preventDefault(); e.stopPropagation(); setSelectedNoteId(n.id); dragRef.current = { id: `note:${n.id}`, noteId: n.id } }} onClick={(e)=>{ e.stopPropagation(); }}>
-            <div className="max-w-[140px] px-2 py-0.5 rounded-full bg-slate-900/90 border border-white/30 text-white text-[10px] whitespace-nowrap overflow-hidden text-ellipsis">
-              {n.text || 'Note'}
-            </div>
+            <div className="max-w-[140px] px-2 py-0.5 rounded-full text-[10px] whitespace-nowrap overflow-hidden text-ellipsis" style={{ backgroundColor: palette.pillBg, color: palette.pillText, borderColor: palette.labelBorder, borderWidth: 1, borderStyle: 'solid' }}>{n.text || 'Note'}</div>
           </div>
         ))}
 
@@ -905,30 +922,39 @@ export default function MeasurementOverlay({ values = {}, onChange, imageUrl = "
         })()}
       </div>
       {!minimal && (
-        <div className="text-xs text-slate-400 mt-2">Tip: values accept numbers; units are managed in the form (cm/in).</div>
+        <div className="text-xs mt-2" style={{ color: isLight ? '#475569' : '#cbd5e1' }}>Tip: values accept numbers; units are managed in the form (cm/in).</div>
       )}
     </div>
   )
 }
 
 function LabeledBox({ label, children, drag = false }){
+  const isLight = (typeof document !== 'undefined') && document.documentElement.getAttribute('data-app-bg') === 'light'
+  const bg = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(15,23,42,0.9)'
+  const border = isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.4)'
+  const text = isLight ? '#0f172a' : '#ffffff'
   return (
-    <div className="flex items-center gap-1 bg-slate-800/90 border border-white/40 rounded-md px-1.5 py-0.5 shadow-md">
+    <div className="flex items-center gap-1 rounded-md px-1.5 py-0.5 shadow-md border" style={{ backgroundColor: bg, borderColor: border, color: text }}>
       {drag && <span title="Drag" className="text-[11px] leading-none select-none cursor-grab">🤚</span>}
-      <span className="text-[10px] leading-none text-white whitespace-nowrap">{label}</span>
+      <span className="text-[10px] leading-none whitespace-nowrap">{label}</span>
       {children}
     </div>
   )
 }
 
 function Input(props){
-  const { className = '', maxLength, inputMode, ...rest } = props
+  const { className = '', maxLength, inputMode, placeholder, ...rest } = props
+  const isLight = (typeof document !== 'undefined') && document.documentElement.getAttribute('data-app-bg') === 'light'
+  const themeClasses = isLight
+    ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'
+    : 'bg-slate-900/80 border-white/40 text-white placeholder-white/70'
   return (
     <input
       {...rest}
       maxLength={maxLength ?? 4}
       inputMode={inputMode ?? 'decimal'}
-      className={`w-[6ch] sm:w-[6.5ch] text-center rounded bg-slate-900/80 border border-white/40 px-1 py-0.5 text-[11px] text-white focus:outline-none ${className}`}
+      placeholder={placeholder ?? '0'}
+      className={`w-[6ch] sm:w-[6.5ch] text-center rounded border px-1 py-0.5 text-[11px] focus:outline-none ${themeClasses} ${className}`}
     />
   )
 }

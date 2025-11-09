@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react"
 import MeasurementOverlay from "../customers/MeasurementOverlay.jsx"
 import { supabase } from "../../lib/supabaseClient.js"
 
@@ -28,6 +28,108 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
   const fieldsRef = useRef(null)
   const [unit, setUnit] = useState((initial.unit === 'in') ? 'in' : 'cm')
   const prevUnitRef = useRef((initial.unit === 'in') ? 'in' : 'cm')
+  const containerRef = useRef(null)
+
+  // Theme awareness for better contrast (matches AppLayout data-app-bg) and reacts to changes
+  const [isLight, setIsLight] = useState(() => (typeof document !== 'undefined') && document.documentElement.getAttribute('data-app-bg') === 'light')
+  const [hasExplicitTheme, setHasExplicitTheme] = useState(() => {
+    if (typeof document === 'undefined') return false
+    const attr = document.documentElement.getAttribute('data-app-bg')
+    return attr === 'light' || attr === 'dark'
+  })
+  const [isPanelLight, setIsPanelLight] = useState(null)
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const el = document.documentElement
+    const inferFromBody = () => {
+      try {
+        const cs = window.getComputedStyle(document.body)
+        const c = cs.backgroundColor || 'rgb(0,0,0)'
+        const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?/i)
+        if (m) {
+          const r = parseInt(m[1],10), g = parseInt(m[2],10), b = parseInt(m[3],10)
+          const a = m[4] != null ? parseFloat(m[4]) : 1
+          if (a < 0.5) return null // too transparent to decide from body
+          const L = (0.2126*r + 0.7152*g + 0.0722*b) / 255
+          return L > 0.6 // light background if luminance high
+        }
+      } catch {}
+      return null
+    }
+    const sync = () => {
+      const attr = el.getAttribute('data-app-bg')
+      if (attr === 'light' || attr === 'dark') {
+        setHasExplicitTheme(true)
+        setIsLight(attr === 'light')
+        return
+      }
+      setHasExplicitTheme(false)
+      const inferred = inferFromBody()
+      if (inferred != null) setIsLight(inferred)
+    }
+    sync()
+    const mo = new MutationObserver(sync)
+    mo.observe(el, { attributes: true, attributeFilter: ['data-app-bg'] })
+    return () => mo.disconnect()
+  }, [])
+  // Also infer from the wizard container's effective background for accuracy; run before paint
+  useLayoutEffect(() => {
+    if (!containerRef.current || typeof window === 'undefined') return
+    try {
+      const parseColor = (str) => {
+        const m = String(str||'').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?/i)
+        if (!m) return null
+        return { r: parseInt(m[1],10), g: parseInt(m[2],10), b: parseInt(m[3],10), a: m[4] != null ? parseFloat(m[4]) : 1 }
+      }
+      let el = containerRef.current
+      let picked = null
+      for (let i=0; i<10 && el; i++) { // walk up a few ancestors
+        const cs = window.getComputedStyle(el)
+        const c = parseColor(cs.backgroundColor)
+        if (c && c.a >= 0.5) { picked = c; break }
+        el = el.parentElement
+      }
+      if (!picked) { setIsPanelLight(null); return }
+      const L = (0.2126*picked.r + 0.7152*picked.g + 0.0722*picked.b) / 255
+      setIsPanelLight(L > 0.6)
+    } catch {}
+    const onResize = () => {
+      try {
+        const cs = window.getComputedStyle(containerRef.current)
+        const m = String(cs.backgroundColor||'').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?/i)
+        if (m) {
+          const r = parseInt(m[1],10), g = parseInt(m[2],10), b = parseInt(m[3],10)
+          const a = m[4] != null ? parseFloat(m[4]) : 1
+          if (a >= 0.5) {
+            const L = (0.2126*r + 0.7152*g + 0.0722*b) / 255
+            setIsPanelLight(L > 0.6)
+          }
+        }
+      } catch {}
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const themeLight = (isPanelLight != null) ? isPanelLight : isLight
+  const headerBorder = themeLight ? 'border-slate-300' : 'border-white/40'
+  const headerTitle = themeLight ? 'text-slate-900' : 'text-white'
+  const mutedText = themeLight ? 'text-slate-900' : 'text-white'
+  const btnBase = themeLight
+    ? 'px-2 py-1 rounded bg-white border border-slate-300 text-slate-900 hover:bg-slate-50'
+    : 'px-2 py-1 rounded bg-white/15 border border-white/40 text-white'
+  const moveBtnActive = themeLight
+    ? 'bg-amber-500/20 border-amber-600/50 text-amber-900'
+    : 'bg-amber-500/20 border-amber-400/40 text-amber-100'
+  const panelBorder = themeLight ? 'border-slate-300' : 'border-white/30'
+  const panelBg = themeLight ? 'bg-white' : 'bg-white/[0.02]'
+  const footerBorder = headerBorder
+  const stepMuted = themeLight ? 'text-slate-900' : 'text-white'
+  const nextBtn = themeLight
+    ? 'rounded bg-white border border-slate-300 px-3 py-1.5 text-slate-900 hover:bg-slate-50'
+    : 'rounded bg-white/15 border border-white/40 px-3 py-1.5 text-white'
+  const backBtn = themeLight
+    ? 'rounded border border-slate-300 px-3 py-1.5 text-slate-900 hover:bg-slate-50'
+    : 'rounded border border-white/50 px-3 py-1.5 text-white bg-white/10'
 
   // Base default positions for when nothing is saved yet (percentages of image area)
   const DEFAULT_POS_MAIN = useMemo(() => ({
@@ -253,29 +355,29 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
 
   const s = STEPS[step]
   return (
-    <div className="h-full flex flex-col">
+    <div ref={containerRef} className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-white/10">
-        <div className="text-white/90 font-medium">{s.title}</div>
+      <div className={`flex items-center justify-between pb-3 border-b ${headerBorder}`}>
+        <div className={`${headerTitle} font-semibold text-lg`} style={{ textShadow: '0 0 3px rgba(0,0,0,0.85)', color: '#ffffff' }}>{s.title}</div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-xs text-white/80 mr-2">
+          <div className={`flex items-center gap-1 text-base font-semibold ${mutedText} mr-2`} style={{ textShadow: '0 0 3px rgba(0,0,0,0.85)', color: '#ffffff' }}>
             <span>Units:</span>
           </div>
           <button
             onClick={() => fieldsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-            className="px-2 py-1 rounded bg-white/10 border border-white/20 text-white/85"
+            className={btnBase}
           >Fields</button>
           {(s.key==='main' || s.key==='collar' || s.key==='side') && (
-            <button onClick={()=> setMoveFixed(v => !v)} className={`px-2 py-1 rounded border ${moveFixed ? 'bg-amber-500/20 border-amber-400/40 text-amber-100' : 'bg-white/10 border-white/20 text-white/85'}`}>{moveFixed ? 'Stop Moving Labels' : 'Move Labels'}</button>
+            <button onClick={()=> setMoveFixed(v => !v)} className={`px-2 py-1 rounded border ${moveFixed ? moveBtnActive : btnBase}`}>{moveFixed ? 'Stop Moving Labels' : 'Move Labels'}</button>
           )}
-          <button onClick={onCancel} className="px-2 py-1 rounded bg-white/10 border border-white/20">Close</button>
+          <button onClick={onCancel} className={btnBase}>Close</button>
         </div>
       </div>
 
       {/* Body */}
       <div className="flex-1 min-h-0 overflow-y-auto pt-3">
         {s.key === 'main' && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+          <div className={`rounded-lg border ${panelBorder} ${panelBg} p-2`}>
             <MeasurementOverlay
               imageUrl={s.image}
               fallbackUrls={["/measurements/garment-fallback.png"]}
@@ -307,11 +409,12 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
               defaultKeys={MAIN_KEYS}
               panelRef={fieldsRef}
               unit={unit}
+              light={themeLight}
             />
           </div>
         )}
         {s.key === 'collar' && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+          <div className={`rounded-lg border ${panelBorder} ${panelBg} p-2`}>
             <MeasurementOverlay
               imageUrl={s.image}
               fallbackUrls={["/measurements/garment-fallback.png"]}
@@ -345,11 +448,12 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
               defaultKeys={COLLAR_KEYS}
               panelRef={fieldsRef}
               unit={unit}
+              light={themeLight}
             />
           </div>
         )}
         {s.key === 'side' && (
-          <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
+          <div className={`rounded-lg border ${panelBorder} ${panelBg} p-2`}>
             <MeasurementOverlay
               imageUrl={s.image}
               fallbackUrls={["/measurements/garment-fallback.png"]}
@@ -383,6 +487,7 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
               defaultKeys={SIDE_KEYS}
               panelRef={fieldsRef}
               unit={unit}
+              light={themeLight}
             />
           </div>
         )}
@@ -390,15 +495,64 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
           <div className="space-y-5">
             {Object.entries(catalog).map(([group, items]) => (
               <div key={group}>
-                <div className="text-white/80 font-medium mb-2">{titleCase(group)}</div>
+                <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mb-2`} style={{ color: '#ffffff' }}>{titleCase(group)}</div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {items.map(opt => {
-                    const checked = (options[group]||[]).includes(opt.key)
+                  {items.map(raw => {
+                    const isString = typeof raw === 'string'
+                    const key = isString ? String(raw) : (raw.key ?? raw.label ?? '')
+                    const label = isString ? String(raw) : (raw.label ?? raw.key ?? '')
+                    const img = isString ? null : (raw.img ?? null)
+                    const current = options[group]
+                    const arr = Array.isArray(current) ? current : (current != null ? [current] : [])
+                    const checked = arr.some(v => v === key || v === label)
+                    const baseBg = themeLight ? 'bg-white hover:bg-slate-50' : 'bg-white/5 hover:bg-white/10'
+                    const baseBorder = themeLight ? 'border-slate-300' : 'border-white/10'
+                    const checkedBorder = themeLight ? 'border-emerald-600 ring-4 ring-emerald-500/70' : 'border-emerald-400 ring-4 ring-emerald-400/60'
+                    const imgBg = themeLight ? 'bg-white' : 'bg-white/5'
+                    const textCls = themeLight ? 'text-slate-900' : 'text-white'
                     return (
-                      <label key={opt.key} className={`relative rounded-lg border p-2 bg-white/5 hover:bg-white/10 cursor-pointer ${checked ? 'border-sky-400/60 ring-1 ring-sky-400/40' : 'border-white/10'}`}>
-                        <input type="checkbox" checked={checked} onChange={()=> toggleOption(group, opt.key)} className="absolute opacity-0 pointer-events-none" />
-                        <img src={opt.img} alt={opt.key} className="w-full h-28 object-contain bg-white/5 rounded" />
-                        <div className="mt-2 text-center text-xs text-white/85">{opt.key}</div>
+                      <label
+                        key={key}
+                        className={`relative rounded-lg border p-2 ${baseBg} cursor-pointer ${checked ? checkedBorder : baseBorder}`}
+                        aria-pressed={checked}
+                        aria-selected={checked}
+                        style={{ overflow: 'visible' }}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSingleOption(group, key)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSingleOption(group, key) } }}
+                      >
+                        {checked && (
+                          <>
+                            {/* Full-width ribbon */}
+                            <div className="pointer-events-none absolute left-0 right-0 -top-2 z-30 flex justify-center">
+                              <span className="rounded-b px-2 py-0.5 bg-emerald-600 text-white text-[11px] font-semibold tracking-wide shadow-md">Selected</span>
+                            </div>
+                            {/* Green tint overlay */}
+                            <div className="pointer-events-none absolute inset-0 z-10 rounded-lg bg-emerald-500/10" />
+                            {/* Check badge */}
+                            <span className="absolute top-1 right-1 z-40 inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500 text-white text-xs shadow-lg border border-white/80">✓</span>
+                          </>
+                        )}
+                        <div className={`relative aspect-video rounded ${imgBg} overflow-hidden flex items-center justify-center`}>
+                          {img ? (
+                            <img src={img} alt="" className="w-full h-full object-contain" />
+                          ) : (
+                            <div className={`text-xs ${textCls}`}>{label}</div>
+                          )}
+                          {checked && (
+                            <>
+                              <div className="absolute inset-0 bg-emerald-500/20" />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-4xl font-black text-emerald-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]">✓</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <div className={`text-center mt-1 text-sm ${textCls}`}>{label}</div>
+                        {checked && (
+                          <div className="mt-0.5 text-center text-xs font-semibold text-emerald-400">✓ Selected</div>
+                        )}
                       </label>
                     )
                   })}
@@ -411,12 +565,12 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
           <div className="space-y-6">
             {buttonStyles.length > 0 && (
               <div>
-                <div className="text-white/80 font-medium mb-2">Button Styles</div>
+                <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mb-2`} style={{ color: '#ffffff', textShadow: '0 0 3px rgba(0,0,0,0.85)' }}>Button Styles</div>
                 <div className="flex flex-wrap gap-2">
                   {buttonStyles.map(key => {
                     const checked = (options.button_style||[]).includes(key)
                     return (
-                      <button key={key} type="button" onClick={()=> toggleOption('button_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-sky-500/15 border-sky-400/40 text-sky-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                      <button key={key} type="button" onClick={()=> toggleOption('button_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? (themeLight ? 'bg-sky-100 border-sky-300 text-slate-900' : 'bg-sky-500/15 border-sky-400/40 text-sky-100') : (themeLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-white/5 border-white/15 text-white/90')}`}>{key}</button>
                     )
                   })}
                 </div>
@@ -425,35 +579,35 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
 
             {fabricTypes.length > 0 && (
               <div>
-                <div className="text-white/80 font-medium mb-2">Fabric Type</div>
+                <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mb-2`} style={{ color: '#ffffff', textShadow: '0 0 3px rgba(0,0,0,0.85)' }}>Fabric Type</div>
                 <div className="flex flex-wrap gap-2">
                   {fabricTypes.map(key => {
                     const checked = (options.fabric_type||[]).includes(key)
-                    return (
-                      <button key={key} type="button" onClick={()=> toggleOption('fabric_type', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
-                    )
-                  })}
-                </div>
+                  return (
+                    <button key={key} type="button" onClick={()=> toggleOption('fabric_type', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? (themeLight ? 'bg-emerald-100 border-emerald-300 text-slate-900' : 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100') : (themeLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-white/5 border-white/25 text-white')}`}>{key}</button>
+                  )
+                })}
               </div>
-            )}
+            </div>
+          )}
 
             <div>
-              <div className="text-white/80 font-medium mb-2">Stitching Style</div>
+              <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mb-2`} style={{ color: '#ffffff' }}>Stitching Style</div>
               <div className="flex flex-wrap gap-2">
                 {['Single','Double','Top','Decorative'].map(key => {
                   const checked = (options.stitching_style||[]).includes(key)
                   return (
-                    <button key={key} type="button" onClick={()=> toggleOption('stitching_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? 'bg-amber-500/15 border-amber-400/40 text-amber-100' : 'bg-white/5 border-white/15 text-white/85'}`}>{key}</button>
+                    <button key={key} type="button" onClick={()=> toggleOption('stitching_style', key)} className={`px-3 py-1.5 rounded border text-sm ${checked ? (themeLight ? 'bg-amber-100 border-amber-300 text-slate-900' : 'bg-amber-500/15 border-amber-400/40 text-amber-100') : (themeLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-white/5 border-white/25 text-white')}`}>{key}</button>
                   )
                 })}
               </div>
             </div>
 
             <div>
-              <div className="text-white/80 font-medium mb-2">Season</div>
-              <div className="inline-flex rounded-md overflow-hidden border border-white/15">
+              <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mb-2`} style={{ color: '#ffffff', textShadow: '0 0 3px rgba(0,0,0,0.85)' }}>Season</div>
+              <div className={`inline-flex rounded-md overflow-hidden border ${themeLight ? 'border-slate-300' : 'border-white/30'}`}>
                 {['Summer','Winter','All-season'].map(key => (
-                  <button key={key} type="button" onClick={()=> setSingleOption('season', key)} className={`px-3 py-1.5 text-sm ${options.season===key ? 'bg-white/20 text-white' : 'bg-white/10 text-white/70'}`}>{key}</button>
+                  <button key={key} type="button" onClick={()=> setSingleOption('season', key)} className={`px-3 py-1.5 text-sm ${options.season===key ? (themeLight ? 'bg-slate-200 text-slate-900' : 'bg-white/20 text-white') : (themeLight ? 'bg-white text-slate-700' : 'bg-white/12 text-white')}`}>{key}</button>
                 ))}
               </div>
             </div>
@@ -461,47 +615,47 @@ export default function ThobeWizard({ initialMeasurements = {}, onDone, onCancel
         )}
         {s.key === 'summary' && (
           <div className="space-y-4">
-            <div className="text-white/80 font-medium">Measurements</div>
+            <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium`} style={{ color: themeLight ? undefined : '#ffffff' }}>Measurements</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
               {Object.entries({ ...mainVals, ...collarVals, ...sideVals }).map(([k,v]) => (
-                <div key={k} className="flex items-center justify-between rounded border border-white/10 bg-white/[0.03] px-3 py-1.5">
-                  <div className="text-white/70">{labelize(k)}</div>
-                  <div className="text-white/90">{String(v || '')}</div>
+                <div key={k} className={`flex items-center justify-between rounded border px-3 py-1.5 ${themeLight ? 'border-slate-300 bg-white' : 'border-white/10 bg-white/[0.03]'}`}>
+                  <div className={`${themeLight ? 'text-slate-700' : 'text-white'}`}>{labelize(k)}</div>
+                  <div className={`${themeLight ? 'text-slate-900' : 'text-white'}`}>{String(v || '')}</div>
                 </div>
               ))}
             </div>
-            <div className="text-white/80 font-medium mt-4">Options</div>
+            <div className={`${themeLight ? 'text-slate-900' : 'text-white'} font-medium mt-4`} style={{ color: themeLight ? undefined : '#ffffff' }}>Options</div>
             {Object.entries(options).map(([g, list]) => {
               const text = Array.isArray(list)
                 ? (list.length ? list.join(', ') : '—')
                 : (list ? String(list) : '—')
               return (
-                <div key={g} className="text-sm text-white/80">
-                  <span className="text-white/60 mr-2">{titleCase(g)}:</span>
-                  <span>{text}</span>
+                <div key={g} className={`text-sm ${themeLight ? 'text-slate-800' : 'text-white'}`}>
+                  <span className={`${themeLight ? 'text-slate-600' : 'text-white'} mr-2`}>{titleCase(g)}:</span>
+                  <span className={`${themeLight ? 'text-slate-900' : 'text-white'}`}>{text}</span>
                 </div>
               )
             })}
             <div className="mt-4">
-              <label className="block text-white/80 font-medium mb-1">Notes</label>
+              <label className={`block font-medium mb-1 ${themeLight ? 'text-slate-900' : 'text-white'}`} style={{ color: themeLight ? undefined : '#ffffff' }}>Notes</label>
               <textarea
                 value={notes}
                 onChange={(e)=> setNotes(e.target.value)}
                 placeholder="Notes about style variations, customer preferences, fabric, or special instructions"
-                className="w-full min-h-[90px] rounded-lg bg-white/5 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:ring-1 focus:ring-sky-400/50"
+                className={`w-full min-h-[90px] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-sky-400/50 ${themeLight ? 'bg-white border border-slate-300 text-slate-900 placeholder-slate-500' : 'bg-white/5 border border-white/15 text-white placeholder-white/70'}`}
               />
-              <div className="text-[11px] text-white/50 mt-1">Use this area if the customer has multiple styles or any special requests.</div>
+              <div className={`text-[11px] mt-1 ${themeLight ? 'text-slate-600' : 'text-white/60'}`}>Use this area if the customer has multiple styles or any special requests.</div>
             </div>
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div className="pt-3 mt-3 border-t border-white/10 flex items-center justify-between">
-        <div className="text-xs text-white/50">Step {step+1} / {STEPS.length}</div>
+      <div className={`pt-3 mt-3 border-t ${footerBorder} flex items-center justify-between`}>
+        <div className={`text-base font-semibold ${stepMuted}`} style={{ textShadow: '0 0 3px rgba(0,0,0,0.85)', color: '#ffffff' }}>Step {step+1} / {STEPS.length}</div>
         <div className="flex gap-2">
-          {step > 0 && <button onClick={back} className="rounded border border-white/15 px-3 py-1.5 text-white/85">Back</button>}
-          {step < STEPS.length-1 && <button onClick={next} className="rounded bg-white/10 border border-white/15 px-3 py-1.5 text-white/90">Next</button>}
+          {step > 0 && <button onClick={back} className={backBtn} style={{ color: '#ffffff' }}>Back</button>}
+          {step < STEPS.length-1 && <button onClick={next} className={nextBtn}>Next</button>}
           {step === STEPS.length-1 && <button onClick={finish} className="rounded bg-emerald-600 text-white px-3 py-1.5">Done</button>}
         </div>
       </div>
@@ -525,40 +679,54 @@ function labelize(s){
 function LabelsPanel({ title, values, setValues, points, setPoints, defaultKeys = [], panelRef, unit = 'cm' }){
   const keysOrder = Array.from(new Set([...(defaultKeys||[]), ...Object.keys(values||{})]))
   const entries = keysOrder.map(k => [k, values?.[k] ?? ''])
+  const isLight = (typeof document !== 'undefined') && document.documentElement.getAttribute('data-app-bg') === 'light'
+  const panelBorder = isLight ? 'border-slate-300' : 'border-white/10'
+  const panelBg = isLight ? 'bg-white' : 'bg-white/[0.02]'
+  const cardBg = isLight ? 'bg-white' : 'bg-white/[0.03]'
+  const cardBorder = isLight ? 'border-slate-300' : 'border-white/10'
+  const labelText = isLight ? 'text-slate-700' : 'text-white/70'
+  const unitText = isLight ? 'text-slate-600' : 'text-white/70'
+  const inputClasses = isLight
+    ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'
+    : 'bg-white/5 border-white/20 text-white placeholder-white/70'
+  const btnBorder = isLight ? 'border-slate-300' : 'border-white/15'
+  const btnBg = isLight ? 'bg-white' : 'bg-white/10'
+  const btnText = isLight ? 'text-slate-900' : 'text-white/90'
+  const btnHover = isLight ? 'hover:bg-slate-50' : 'hover:bg-white/15'
   return (
-    <div ref={panelRef} className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+    <div ref={panelRef} className={`mt-3 rounded-lg border ${panelBorder} ${panelBg} p-3`}>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-white/80 font-medium">{title}</div>
+        <div className={`${isLight ? 'text-slate-800' : 'text-white/80'} font-medium`}>{title}</div>
         <button
           type="button"
           onClick={() => setPoints(arr => [
             ...arr,
             { id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`, label: 'Custom', xPct: 50, yPct: 50, value: '', unit }
           ])}
-          className="rounded border border-white/15 bg-white/10 text-white/90 px-2 py-1 text-xs hover:bg-white/15"
+          className={`rounded border ${btnBorder} ${btnBg} ${btnText} px-2 py-1 text-xs ${btnHover}`}
         >
           Add Custom Label
         </button>
       </div>
       {entries.length === 0 && (points||[]).length === 0 ? (
-        <div className="text-xs text-white/50">No labels yet. You can click on the image to add custom labels.</div>
+        <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-white/50'}`}>No labels yet. You can click on the image to add custom labels.</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
           {entries.map(([k,v]) => (
-            <div key={k} className="flex items-center justify-between rounded bg-white/[0.03] border border-white/10 px-2 py-1.5">
-              <div className="text-xs text-white/70 mr-2">{labelize(k)}</div>
+            <div key={k} className={`flex items-center justify-between rounded ${cardBg} border ${cardBorder} px-2 py-1.5`}>
+              <div className={`text-xs ${labelText} mr-2`}>{labelize(k)}</div>
               <div className="flex items-center gap-2">
-                <input value={v||''} onChange={(e)=> setValues(m => ({ ...m, [k]: e.target.value }))} className="w-24 rounded bg-white/5 border border-white/20 px-2 py-1 text-xs text-white" />
-                <span className="text-[11px] text-white/70">{unit}</span>
+                <input value={v||''} onChange={(e)=> setValues(m => ({ ...m, [k]: e.target.value }))} placeholder="0" className={`w-24 rounded border px-2 py-1 text-xs ${inputClasses}`} />
+                <span className={`text-[11px] ${unitText}`}>{unit}</span>
               </div>
             </div>
           ))}
           {(points||[]).map((p) => (
-            <div key={p.id} className="flex items-center justify-between rounded bg-white/[0.03] border border-white/10 px-2 py-1.5">
-              <input value={p.label} onChange={(e)=> setPoints(arr => arr.map(x => x.id===p.id ? { ...x, label: e.target.value } : x))} className="w-32 rounded bg-white/5 border border-white/20 px-2 py-1 text-xs text-white mr-2" />
+            <div key={p.id} className={`flex items-center justify-between rounded ${cardBg} border ${cardBorder} px-2 py-1.5`}>
+              <input value={p.label} onChange={(e)=> setPoints(arr => arr.map(x => x.id===p.id ? { ...x, label: e.target.value } : x))} placeholder="Label" className={`w-32 rounded border px-2 py-1 text-xs mr-2 ${inputClasses}`} />
               <div className="flex items-center gap-2">
-                <input value={p.value||''} onChange={(e)=> setPoints(arr => arr.map(x => x.id===p.id ? { ...x, value: e.target.value } : x))} className="w-24 rounded bg-white/5 border border-white/20 px-2 py-1 text-xs text-white" />
-                <span className="text-[11px] text-white/70">{unit}</span>
+                <input value={p.value||''} onChange={(e)=> setPoints(arr => arr.map(x => x.id===p.id ? { ...x, value: e.target.value } : x))} placeholder="0" className={`w-24 rounded border px-2 py-1 text-xs ${inputClasses}`} />
+                <span className={`text-[11px] ${unitText}`}>{unit}</span>
               </div>
               <button title="Remove" onClick={()=> setPoints(arr => arr.filter(x => x.id !== p.id))} className="px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-[10px] text-red-200">✕</button>
             </div>
