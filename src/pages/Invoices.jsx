@@ -38,7 +38,7 @@ export default function Invoices() {
   // Pricing integration
   const [priceBook, setPriceBook] = useState(null)
   const [inventoryItems, setInventoryItems] = useState([])
-  const [invoiceSettings, setInvoiceSettings] = useState({ currency: 'SAR', vat_percent: 0, rounding: 'none' })
+  const [invoiceSettings, setInvoiceSettings] = useState({ currency: 'QAR', vat_percent: 0, rounding: 'none' })
   // Fabric selection UI
   const [fabricSource, setFabricSource] = useState('walkin') // 'walkin' | 'shop'
   const [walkUnit, setWalkUnit] = useState(0)
@@ -46,6 +46,10 @@ export default function Invoices() {
   const [fabricSkuId, setFabricSkuId] = useState('')
   const [handlingPerGarment, setHandlingPerGarment] = useState(0)
   const [handlingPerMeter, setHandlingPerMeter] = useState(0)
+  // Selling Items selection
+  const [sellingItems, setSellingItems] = useState([])
+  const [sellingLoading, setSellingLoading] = useState(false)
+  const [selectedSellingId, setSelectedSellingId] = useState('')
   // Preview modal
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState(null)
@@ -120,6 +124,8 @@ export default function Invoices() {
             currency: inv.currency || 'SAR',
             vat_percent: Number(inv.vat_percent || inv.vat || 0) || 0,
             rounding: inv.rounding || 'none',
+            // pass-through optional exchange rates map
+            exchange_rates: inv.exchange_rates || inv.fx || inv.rates || undefined,
           })
         }
       } catch {}
@@ -353,15 +359,89 @@ export default function Invoices() {
     return m ? m[1] : String(lbl)
   }
 
-  function buildPricingPreview() {
+  async function buildPricingPreview() {
     try {
       const order = orders.find(o => o.id === selected)
-      if (!order || !priceBook) return null
+      if (!order) return null
       const gKey = String(order?.items?.garment_category || 'thobe').toLowerCase()
       const qty = Number(order?.items?.quantity || 1)
       const mVals = gKey === 'sirwal' || gKey === 'falina' ? (sirwalSnap || thobeSnap) : (thobeSnap || sirwalSnap)
       const optionsSel = mVals?.options || order?.items?.options || null
       const selectedFabricItem = inventoryItems.find(i => i.id === fabricSkuId) || null
+      // Ensure inventory available for pricing; if empty, fetch and merge variant prices
+      let invForPricing = inventoryItems
+      // Selling Items for base price override
+      let basePriceOverride = null
+      // Prefer explicitly selected Selling Item
+      try {
+        if (selectedSellingId) {
+          const picked = sellingItems.find(s => s.id === selectedSellingId)
+          if (picked && picked.default_price != null) basePriceOverride = Number(picked.default_price)
+        }
+      } catch {}
+      try {
+        if (!Array.isArray(invForPricing) || invForPricing.length === 0) {
+          const [{ data: it }, { data: vrows }, { data: selling }] = await Promise.all([
+            supabase
+              .from('inventory_items')
+              .select('id, sku, name, category, sell_price, sell_currency, price, unit_price, retail_price, default_price, sell_unit_price, uom_base, default_currency, business_id')
+              .eq('business_id', ids.business_id)
+              .order('name'),
+            supabase
+              .from('v_items_with_current_prices')
+              .select('item_id, item_name, category, is_variant, variant_name, price, currency')
+              .eq('business_id', ids.business_id),
+            supabase
+              .from('selling_items')
+              .select('id, name, type, default_price, active')
+              .eq('business_id', ids.business_id)
+          ])
+          const base = Array.isArray(it) ? it : []
+          const synth = (vrows||[]).filter(r => r.is_variant && r.price != null).map(r => ({
+            id: `var-${r.item_id}-${r.variant_name||'base'}`,
+            sku: null,
+            name: r.variant_name || r.item_name,
+            category: r.category || '',
+            sell_price: Number(r.price),
+            sell_currency: r.currency,
+            uom_base: 'unit',
+            default_currency: r.currency,
+          }))
+          invForPricing = [...base, ...synth]
+          // Base price from selling_items (garment) if none explicitly selected
+          if (basePriceOverride == null) {
+            const match = (selling||[]).find(s => s.active !== false && s.type === 'garment' && String(s.name||'').toLowerCase().includes(gKey))
+            if (match && match.default_price != null) basePriceOverride = Number(match.default_price)
+          }
+        } else {
+          const [{ data: vrows }, { data: selling }] = await Promise.all([
+            supabase
+              .from('v_items_with_current_prices')
+              .select('item_id, item_name, category, is_variant, variant_name, price, currency')
+              .eq('business_id', ids.business_id),
+            supabase
+              .from('selling_items')
+              .select('id, name, type, default_price, active')
+              .eq('business_id', ids.business_id)
+          ])
+          const synth = (vrows||[]).filter(r => r.is_variant && r.price != null).map(r => ({
+            id: `var-${r.item_id}-${r.variant_name||'base'}`,
+            sku: null,
+            name: r.variant_name || r.item_name,
+            category: r.category || '',
+            sell_price: Number(r.price),
+            sell_currency: r.currency,
+            uom_base: 'unit',
+            default_currency: r.currency,
+          }))
+          invForPricing = [...invForPricing, ...synth]
+          if (basePriceOverride == null) {
+            const match = (selling||[]).find(s => s.active !== false && s.type === 'garment' && String(s.name||'').toLowerCase().includes(gKey))
+            if (match && match.default_price != null) basePriceOverride = Number(match.default_price)
+          }
+        }
+      } catch {}
+
       const priced = computeLinePrice({
         garmentKey: gKey,
         qty,
@@ -371,11 +451,12 @@ export default function Invoices() {
         walkInTotal: Number(walkTotal||0)||0,
         fabricSkuItem: selectedFabricItem,
         optionSelections: optionsSel,
-        inventoryItems,
+        inventoryItems: invForPricing,
         priceBook: priceBook || {},
         settings: invoiceSettings,
         handlingPerGarment: Number(handlingPerGarment)||0,
         handlingPerMeter: Number(handlingPerMeter)||0,
+        basePriceOverride,
       })
       const totals = computeInvoiceTotals({
         lines: [priced],
@@ -383,8 +464,16 @@ export default function Invoices() {
         rounding: invoiceSettings.rounding,
         currency: codeFromLabel(invoiceSettings.currency)
       })
-      const g = (priceBook.garments||[]).find(x => String(x.garment_key).toLowerCase()===gKey)
-      const basePerUnit = Number(g?.base_price||0)
+      // Derive base per unit from inventory items in the same category (highest sell_price)
+      let basePerUnit = 0
+      try {
+        const candidates = (inventoryItems||[]).filter(it => String(it?.category||'').toLowerCase().includes(gKey))
+        const priced = candidates.filter(i => i && i.sell_price != null)
+        if (priced.length) {
+          priced.sort((a,b)=> (Number(b.sell_price||0) - Number(a.sell_price||0)))
+          basePerUnit = Number(priced[0].sell_price||0)
+        }
+      } catch {}
       return {
         qty,
         garmentKey: gKey,
@@ -431,6 +520,14 @@ export default function Invoices() {
       const mVals = gKey === 'sirwal' || gKey === 'falina' ? (sirwalSnap || thobeSnap) : (thobeSnap || sirwalSnap)
       const optionsSel = mVals?.options || order?.items?.options || null
       const selectedFabricItem = inventoryItems.find(i => i.id === fabricSkuId) || null
+      // Use selected selling item when present
+      let basePriceOverride = null
+      try {
+        if (selectedSellingId) {
+          const picked = sellingItems.find(s => s.id === selectedSellingId)
+          if (picked && picked.default_price != null) basePriceOverride = Number(picked.default_price)
+        }
+      } catch {}
       const priced = computeLinePrice({
         garmentKey: gKey,
         qty,
@@ -445,16 +542,19 @@ export default function Invoices() {
         settings: invoiceSettings,
         handlingPerGarment: Number(handlingPerGarment)||0,
         handlingPerMeter: Number(handlingPerMeter)||0,
+        basePriceOverride,
       })
       lines.push(priced)
-      const totals = computeInvoiceTotals({ lines, vatPercent: invoiceSettings.vat_percent, rounding: invoiceSettings.rounding, currency: invoiceSettings.currency })
+      const totals = computeInvoiceTotals({ lines, vatPercent: invoiceSettings.vat_percent, rounding: invoiceSettings.rounding, currency: codeFromLabel(invoiceSettings.currency) })
+      const selItem = selectedSellingId ? sellingItems.find(s => s.id === selectedSellingId) : null
       const payload = {
         business_id: ids.business_id,
         order_id: selected,
         customer_id: c.id,
         customer_name: c.name,
         status: 'draft',
-        items: { ...(order.items || {}), pricing: { fabric_source: fabricSource, walk_in_unit_price: Number(walkUnit)||0, walk_in_total: walkTotal === '' ? null : Number(walkTotal)||0, fabric_sku_id: fabricSkuId || null, handling_per_garment: Number(handlingPerGarment)||0, handling_per_meter: Number(handlingPerMeter)||0 } },
+        currency: codeFromLabel(invoiceSettings.currency),
+        items: { ...(order.items || {}), selling_item_id: selItem?.id || null, selling_item_name: selItem?.name || null, pricing: { fabric_source: fabricSource, walk_in_unit_price: Number(walkUnit)||0, walk_in_total: walkTotal === '' ? null : Number(walkTotal)||0, fabric_sku_id: fabricSkuId || null, handling_per_garment: Number(handlingPerGarment)||0, handling_per_meter: Number(handlingPerMeter)||0 } },
         measurements: {
           thobe: thobeSnap ? { key: thobeKey, data: thobeSnap } : null,
           sirwal_falina: sirwalSnap ? { key: sirwalKey, data: sirwalSnap } : null,
@@ -462,8 +562,35 @@ export default function Invoices() {
         totals,
         notes: null,
       }
-      const { error } = await supabase.from('invoices').insert(payload)
+      const { data: insertedInv, error } = await supabase
+        .from('invoices')
+        .insert(payload)
+        .select('id')
+        .single()
       if (error) throw error
+      const newInvId = insertedInv?.id
+      // Snapshot invoice_items line immediately
+      try {
+        if (newInvId) {
+          const qtySnap = Number(qty || 1)
+          const selItem = selectedSellingId ? sellingItems.find(s => s.id === selectedSellingId) : null
+          const lineName = selItem?.name || (gKey === 'sirwal' || gKey === 'falina' ? 'Sirwal' : 'Thobe')
+          const unitPriceSnap = basePriceOverride != null ? Number(basePriceOverride) : (qtySnap > 0 ? Number((priced.subtotal||0) / qtySnap) : Number(priced.subtotal||0))
+          const lineTotalSnap = Number((unitPriceSnap * qtySnap).toFixed(2))
+          await supabase.from('invoice_items').insert({
+            invoice_id: newInvId,
+            name: lineName,
+            sku: null,
+            qty: qtySnap,
+            unit: 'unit',
+            unit_price: unitPriceSnap,
+            discount: null,
+            tax_code: null,
+            line_total: lineTotalSnap,
+            currency: codeFromLabel(invoiceSettings.currency)
+          })
+        }
+      } catch {}
       // refresh invoice list
       const { data: latest } = await supabase
         .from('invoices')
@@ -548,7 +675,7 @@ export default function Invoices() {
             <button
               onClick={() => { const p = buildPricingPreview(); setPreview(p); setPreviewOpen(!!p) }}
               className="px-3 py-2 rounded-md text-sm bg-white/10 text-white border border-white/15 hover:bg-white/15 disabled:opacity-60"
-              disabled={!selected || !priceBook}
+              disabled={!selected}
             >
               Preview
             </button>
@@ -558,14 +685,25 @@ export default function Invoices() {
           </PermissionGate>
         </div>
         </div>
-        <div className="mt-3 flex items-center gap-3">
-          <label className="text-sm text-white/80">Order</label>
-          <select value={selected} onChange={(e)=> setSelected(e.target.value)} className="rounded bg-white border border-white/10 px-3 py-2 text-sm text-black">
-            <option value="">Select order…</option>
-            {orders.map(o => (
-              <option key={o.id} value={o.id}>{o.id} — {o.customer_name || 'Customer'} — {new Date(o.created_at).toLocaleDateString()}</option>
-            ))}
-          </select>
+        <div className="mt-3 flex flex-col md:flex-row md:items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-white/80">Order</label>
+            <select value={selected} onChange={(e)=> setSelected(e.target.value)} className="rounded bg-white border border-white/10 px-3 py-2 text-sm text-black">
+              <option value="">Select order…</option>
+              {orders.map(o => (
+                <option key={o.id} value={o.id}>{o.id} — {o.customer_name || 'Customer'} — {new Date(o.created_at).toLocaleDateString()}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-white/80">Selling Item</label>
+            <select value={selectedSellingId} onChange={(e)=> setSelectedSellingId(e.target.value)} className="rounded bg-white border border-white/10 px-3 py-2 text-sm text-black min-w-[220px]">
+              <option value="">Select…</option>
+              {(sellingItems||[]).filter(s => s.active !== false).map(s => (
+                <option key={s.id} value={s.id}>{s.name} {s.default_price!=null?`— ${Number(s.default_price).toFixed(2)} ${codeFromLabel(invoiceSettings.currency)}`:''}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

@@ -12,6 +12,10 @@ const TABS = {
   RECEIPTS: 'receipts',
   PRICING: 'pricing',
 };
+const MAIN_TABS = {
+  INVENTORY: 'inventory',
+  PRICE_KEEPING: 'price_keeping',
+}
 
 // Currency options (labels match Settings Invoice select)
 const CURRENCIES = [
@@ -41,6 +45,7 @@ export default function Inventory() {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("");
   const [tab, setTab] = useState(TABS.ITEMS);
+  const [mainTab, setMainTab] = useState(MAIN_TABS.INVENTORY);
   // Pricing settings state (from user_settings.pricing_settings)
   const [pricingLoaded, setPricingLoaded] = useState(false);
   const [pricingCurrency, setPricingCurrency] = useState('SAR');
@@ -74,6 +79,13 @@ export default function Inventory() {
   const [historyItem, setHistoryItem] = useState(null);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Selling Items (Price Keeping)
+  const [siLoading, setSiLoading] = useState(false)
+  const [sellingItems, setSellingItems] = useState([])
+  const [siAddOpen, setSiAddOpen] = useState(false)
+  const [siType, setSiType] = useState('garment') // garment|service|addon|package
+  const [siName, setSiName] = useState('')
+  const [siPrice, setSiPrice] = useState('')
 
   // Fetch initial data
   useEffect(() => {
@@ -152,6 +164,42 @@ export default function Inventory() {
     if (tab !== TABS.PRICING) return;
     loadPricingRows();
   }, [tab, ids.business_id]);
+
+  // Load Selling Items when switching to Price Keeping
+  useEffect(() => {
+    if (mainTab !== MAIN_TABS.PRICE_KEEPING || !ids.business_id) return
+    ;(async () => {
+      setSiLoading(true)
+      try {
+        const { data } = await supabase
+          .from('selling_items')
+          .select('id, name, type, default_price, active, created_at')
+          .eq('business_id', ids.business_id)
+          .order('created_at', { ascending: false })
+        setSellingItems(data || [])
+      } catch {
+        setSellingItems([])
+      } finally { setSiLoading(false) }
+    })()
+  }, [mainTab, ids.business_id])
+
+  const handleSiSave = async () => {
+    try {
+      if (!ids.business_id) throw new Error('Missing business')
+      const nm = String(siName||'').trim()
+      if (!nm) { alert('Name is required'); return }
+      const priceNum = siPrice === '' ? null : Number(siPrice)
+      const payload = { business_id: ids.business_id, name: nm, type: siType, default_price: priceNum, active: true }
+      const { data: inserted, error } = await supabase
+        .from('selling_items')
+        .insert(payload)
+        .select('id, name, type, default_price, active, created_at')
+        .single()
+      if (error) throw error
+      setSellingItems(prev => [inserted, ...(prev||[])])
+      setSiAddOpen(false); setSiName(''); setSiPrice(''); setSiType('garment')
+    } catch (e) { alert(e?.message || 'Failed to save') }
+  }
 
   // Save a price change inline from the grid
   const handleSavePriceInline = async (row, priceValue, currencyLabel) => {
@@ -779,62 +827,159 @@ export default function Inventory() {
   return (
     <>
     <div className="p-6">
-      <h1 className="text-2xl font-bold text-white mb-6">Inventory Management</h1>
-      
-      {/* Tabs */}
-      <div className="flex border-b border-white/10 mb-6">
+      <h1 className="text-2xl font-bold text-white mb-6">Inventory & Price Keeping</h1>
+
+      {/* Major Tabs: Inventory | Price Keeping */}
+      <div className="flex border-b border-white/10 mb-3">
         <button
           role="tab"
-          aria-selected={tab === TABS.ITEMS}
+          aria-selected={mainTab === MAIN_TABS.INVENTORY}
           className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
-            tab === TABS.ITEMS
+            mainTab === MAIN_TABS.INVENTORY
               ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
               : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
           }`}
-          onClick={() => setTab(TABS.ITEMS)}
+          onClick={() => { setMainTab(MAIN_TABS.INVENTORY); if (tab === TABS.PRICING) setTab(TABS.ITEMS); }}
         >
-          Items
+          Inventory
         </button>
         <button
           role="tab"
-          aria-selected={tab === TABS.SUPPLIERS}
+          aria-selected={mainTab === MAIN_TABS.PRICE_KEEPING}
           className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
-            tab === TABS.SUPPLIERS
+            mainTab === MAIN_TABS.PRICE_KEEPING
               ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
               : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
           }`}
-          onClick={() => setTab(TABS.SUPPLIERS)}
+          onClick={() => { setMainTab(MAIN_TABS.PRICE_KEEPING); setTab(TABS.PRICING); }}
         >
-          Suppliers
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === TABS.RECEIPTS}
-          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
-            tab === TABS.RECEIPTS
-              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
-              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
-          }`}
-          onClick={() => setTab(TABS.RECEIPTS)}
-        >
-          Receipts
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === TABS.PRICING}
-          className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow active:translate-y-px ${
-            tab === TABS.PRICING
-              ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
-              : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
-          }`}
-          onClick={() => setTab(TABS.PRICING)}
-        >
-          Pricing
+          Price Keeping
         </button>
       </div>
+
+      {/* Secondary Tabs when in Inventory: Items | Suppliers | Receipts */}
+      {mainTab === MAIN_TABS.INVENTORY && (
+        <div className="flex border-b border-white/10 mb-6">
+          <button
+            role="tab"
+            aria-selected={tab === TABS.ITEMS}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+              tab === TABS.ITEMS
+                ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+                : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+            }`}
+            onClick={() => setTab(TABS.ITEMS)}
+          >
+            Items
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === TABS.SUPPLIERS}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+              tab === TABS.SUPPLIERS
+                ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+                : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+            }`}
+            onClick={() => setTab(TABS.SUPPLIERS)}
+          >
+            Suppliers
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === TABS.RECEIPTS}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-t-md cursor-pointer transition-colors border-b-2 ring-1 ring-inset mx-1 shadow-sm hover:shadow ${
+              tab === TABS.RECEIPTS
+                ? 'text-emerald-200 border-emerald-400 bg-emerald-500/20 ring-emerald-400/40'
+                : 'text-white/90 border-white/20 bg-white/10 ring-white/20 hover:bg-white/15 hover:ring-white/30'
+            }`}
+            onClick={() => setTab(TABS.RECEIPTS)}
+          >
+            Receipts
+          </button>
+        </div>
+      )}
       
       {/* Tab Content */}
       <div className="bg-slate-900/50 rounded-xl p-6">
+        {/* Price Keeping main tab content */}
+        {mainTab === MAIN_TABS.PRICE_KEEPING && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-white/90 font-medium">Selling Items</div>
+                <div className="text-white/60 text-sm">Add things you sell (garments, services, add-ons). Prices use your Settings currency.</div>
+              </div>
+              <div className="flex gap-2">
+                <button className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white" onClick={() => { setSiType('garment'); setSiAddOpen(true) }}>+ Garment</button>
+                <button className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white" onClick={() => { setSiType('service'); setSiAddOpen(true) }}>+ Service</button>
+                <button className="px-3 py-2 rounded bg-white/10 border border-white/15 text-white" onClick={() => { setSiType('addon'); setSiAddOpen(true) }}>+ Add-on</button>
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/10 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-white/5 text-white/70">
+                  <tr>
+                    <th className="text-left px-3 py-2">Name</th>
+                    <th className="text-left px-3 py-2">Type</th>
+                    <th className="text-left px-3 py-2">Price</th>
+                    <th className="text-right px-3 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/10">
+                  {siLoading && (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-white/60">Loading…</td></tr>
+                  )}
+                  {!siLoading && (sellingItems||[]).length === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-white/60">No selling items yet</td></tr>
+                  )}
+                  {(sellingItems||[]).map(row => (
+                    <tr key={row.id} className="text-white/90">
+                      <td className="px-3 py-2">{row.name}</td>
+                      <td className="px-3 py-2 capitalize">{row.type}</td>
+                      <td className="px-3 py-2">{row.default_price != null ? Number(row.default_price).toFixed(2) : '—'} {codeToLabel(labelToCode(pricingCurrency)).slice(0,3)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button className="px-2 py-1 text-white/80 bg-white/10 border border-white/15 rounded mr-2" disabled>Edit</button>
+                        <button className="px-2 py-1 text-red-300 bg-red-500/10 border border-red-400/30 rounded" disabled>Deactivate</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Add Selling Item modal */}
+            {siAddOpen && (
+              <div className="fixed inset-0 z-[95] bg-black/50 flex items-center justify-center" onClick={() => setSiAddOpen(false)}>
+                <div className="glass rounded-xl p-4 w-[96vw] max-w-md" onClick={(e)=> e.stopPropagation()}>
+                  <div className="text-white/90 font-medium mb-2">Add Selling Item</div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-white/70 mb-1">Type</label>
+                      <select value={siType} onChange={(e)=> setSiType(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
+                        <option value="garment">Garment</option>
+                        <option value="service">Service</option>
+                        <option value="addon">Add-on</option>
+                        <option value="package">Package</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-white/70 mb-1">Name</label>
+                      <input value={siName} onChange={(e)=> setSiName(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. Thobe" />
+                    </div>
+                    <div>
+                      <label className="block text-white/70 mb-1">Price ({codeToLabel(labelToCode(pricingCurrency))})</label>
+                      <input type="number" step="0.01" value={siPrice} onChange={(e)=> setSiPrice(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white" placeholder="e.g. 120" />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 mt-4">
+                    <button className="px-3 py-2 rounded bg-white/10 border border-white/15" onClick={()=> setSiAddOpen(false)}>Cancel</button>
+                    <button className="px-3 py-2 rounded pill-active glow" onClick={handleSiSave}>Save</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {tab === TABS.ITEMS && (
           <div>
             <div className="flex items-center gap-3 mb-4">

@@ -28,7 +28,7 @@ export async function ensureInvoiceFromOrder({ orderId, businessId, customerId, 
     order_id: orderId,
     customer_id: customerId,
     status: 'draft',
-    currency: currency || 'SAR',
+    currency: currency || 'QAR',
     due_date: dueDate || null,
     issued_at: new Date().toISOString(),
   }

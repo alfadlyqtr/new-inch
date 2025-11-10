@@ -226,8 +226,8 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
   if (!open) return null;
 
   const nameErr = name.trim().length === 0 ? 'Name is required' : '';
-  const skuErr = sku.trim().length === 0 ? 'SKU is required' : '';
-  const canSave = !nameErr && !skuErr;
+  const skuErr = '';
+  const canSave = !nameErr;
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -235,7 +235,11 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
       setSaving(true);
       const currency_code = labelToCode(currency);
       const sell_currency_code = labelToCode(sellCurrency || currency);
-      const finalCategory = categoryCustom ? (categoryText || null) : (category || null);
+      const finalCategory = (() => {
+        const raw = categoryCustom ? (categoryText || '') : (category || '');
+        const t = String(raw).trim();
+        return t ? t : 'other';
+      })();
       // Build initial stock payload for NEW items only if provided
       let initial_stock = null;
       if (!initial?.id) {
@@ -305,24 +309,22 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-2xl max-h-[85vh] rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl overflow-hidden flex flex-col" onClick={(e)=> e.stopPropagation()}>
+    <div className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[96vw] max-w-2xl max-h-[85vh] glass overflow-hidden flex flex-col" onClick={(e)=> e.stopPropagation()}>
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <div className="text-white/90 font-medium">{initial?.id ? 'Edit Item' : 'Add Item'}</div>
-          <button onClick={onClose} className="px-2 py-1 rounded bg-white/10 border border-white/20">✕</button>
+          <button onClick={onClose} className="px-2 py-1 rounded bg-white/10 border border-white/15">✕</button>
         </div>
         <div className="p-4 space-y-4 text-sm flex-1 overflow-y-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-white/70 mb-1">SKU <span className="text-red-400">*</span></label>
+              <label className="block text-white/70 mb-1">SKU</label>
               <input
-                className={`w-full rounded bg-white/5 border px-3 py-2 text-white ${touched.sku && skuErr ? 'border-red-500/70' : 'border-white/15'}`}
+                className={`w-full rounded bg-white/5 border px-3 py-2 text-white border-white/15`}
                 value={sku}
                 onChange={(e)=> setSku(e.target.value)}
                 onBlur={() => setTouched(t => ({ ...t, sku: true }))}
-                required
               />
-              {touched.sku && skuErr && (<p className="text-xs text-red-400 mt-1">{skuErr}</p>)}
             </div>
             <div>
               <label className="block text-white/70 mb-1">Name <span className="text-red-400">*</span></label>
@@ -350,7 +352,7 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
                   <button
                     type="button"
                     onClick={()=>{ setCategoryCustom(false); setCategory(categoryText || ''); }}
-                    className="px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-500 active:translate-y-px shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/50 w-full md:w-auto"
+                    className="px-3 py-2 rounded-md pill-active glow w-full md:w-auto"
                     title="Switch back to list"
                   >
                     Use list »
@@ -373,14 +375,7 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
                 {['pcs','m','yard','roll','box'].map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-white/70 mb-1">Default Currency</label>
-              <select value={currency} onChange={(e)=> setCurrency(e.target.value)} className="w-full rounded bg-white/5 border border-white/15 px-3 py-2 text-white select-light">
-                {CURRENCIES.map(c => (
-                  <option key={c.code} value={c.label}>{c.label}</option>
-                ))}
-              </select>
-            </div>
+            {/* Default Currency field removed to follow user appearance settings; currency still hydrates from settings internally */}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
@@ -399,7 +394,7 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
 
           {/* Variant Editor for garment categories */}
           {GARMENT_CATS.includes((categoryCustom ? (categoryText||'') : (category||'')).toLowerCase()) && (
-            <div className="mt-2 p-3 rounded-lg bg-white/5 border border-white/10">
+            <div className="mt-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
               <div className="text-white/80 text-sm font-medium mb-2">Variants</div>
               <div className="space-y-2">
                 {(variants || []).map((v, idx) => (
@@ -523,7 +518,7 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <button onClick={onClose} className="px-3 py-2 rounded bg-white/10 border border-white/15">Cancel</button>
-            <button disabled={!canSave || saving} onClick={() => { if (!canSave) { setTouched({ sku: true, name: true }); return; } handleSave(); }} className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+            <button disabled={!canSave || saving} onClick={() => { if (!canSave) { setTouched({ sku: true, name: true }); return; } handleSave(); }} className="px-3 py-2 rounded pill-active glow disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </div>
       </div>

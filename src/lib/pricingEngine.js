@@ -76,11 +76,47 @@ function priceOptionSelections(optionsObj, inventoryIdx) {
   return { total, hits }
 }
 
-export function computeLinePrice({ garmentKey, qty=1, measurements, fabricSource, walkInUnitPrice=0, walkInTotal=0, fabricSkuItem=null, optionSelections, inventoryItems, priceBook, settings, handlingPerGarment=0, handlingPerMeter=0 }) {
+function normalizeCode(s){
+  if (!s) return null
+  if (typeof s !== 'string') return null
+  // Try first 3-letter code pattern
+  const m = s.match(/([A-Z]{3})/)
+  return m ? m[1] : s.toUpperCase()
+}
+
+function convertCurrency(amount, from, to, settings){
+  // No currency conversion. Always return the numeric amount as-is.
+  return Number(amount)||0
+}
+
+export function computeLinePrice({ garmentKey, qty=1, measurements, fabricSource, walkInUnitPrice=0, walkInTotal=0, fabricSkuItem=null, optionSelections, inventoryItems, priceBook, settings, handlingPerGarment=0, handlingPerMeter=0, basePriceOverride=null }) {
   const pb = normalizePriceBook(priceBook)
   const invIdx = indexInventory(inventoryItems)
-  const g = findGarment(pb, garmentKey)
-  const basePrice = Number(g?.base_price || 0)
+  const gKey = String(garmentKey||'').toLowerCase()
+  // Determine base garment price from Inventory by matching category to garment key
+  let baseItem = null
+  try {
+    const all = Array.isArray(inventoryItems) ? inventoryItems : []
+    // 1) Primary: category includes garment key
+    let pool = all.filter(it => String(it?.category||'').toLowerCase().includes(gKey))
+    // 2) Fallback: name includes garment key
+    if (!pool.length) pool = all.filter(it => String(it?.name||'').toLowerCase().includes(gKey))
+    // 3) Fallback: restrict to common garment categories to avoid picking fabrics/options
+    if (!pool.length) {
+      const GARMENT_CATS = ['thobe','sirwal','falina']
+      pool = all.filter(it => GARMENT_CATS.includes(String(it?.category||'').toLowerCase()))
+    }
+    const priced = pool.filter(i => i && i.sell_price != null)
+    if (priced.length) {
+      priced.sort((a,b)=> (Number(b.sell_price||0) - Number(a.sell_price||0)))
+      baseItem = priced[0]
+    }
+  } catch {}
+  // Convert base price to invoice/settings currency if needed
+  const targetCur = normalizeCode(settings?.currency || settings?.currency_code || 'SAR')
+  const baseCur = baseItem?.sell_currency || baseItem?.default_currency || null
+  const baseRaw = (basePriceOverride != null) ? Number(basePriceOverride) : Number(baseItem?.sell_price || 0)
+  const basePrice = convertCurrency(baseRaw, baseCur, targetCur, settings)
   const quantity = Number(qty)||0
   const base = basePrice * quantity
 
@@ -112,7 +148,9 @@ export function computeLinePrice({ garmentKey, qty=1, measurements, fabricSource
       resolvedFabricItem.default_price,
       resolvedFabricItem.sell_unit_price,
     ].find(v => v != null)
-    const unitPrice = Number(alt || 0)
+    const unitRaw = Number(alt || 0)
+    const unitCur = resolvedFabricItem.sell_currency || resolvedFabricItem.default_currency || null
+    const unitPrice = convertCurrency(unitRaw, unitCur, targetCur, settings)
     fabric = metersPerUnit * unitPrice * quantity
     fabricDetail = { source:'shop', metersPerUnit, unitPrice, sku: resolvedFabricItem.sku }
   } else if (fabricSource === 'walkin') {
@@ -155,7 +193,10 @@ export function computeLinePrice({ garmentKey, qty=1, measurements, fabricSource
           // try find inventory by id or by sku code
           let item = inventoryItems.find(i => i.id === m.sku_id)
           if (!item) item = invIdx.bySku.get(String(m.sku_id).toLowerCase())
-          if (item && item.sell_price != null) add = Number(item.sell_price)||0
+          if (item && item.sell_price != null) {
+            const cur = item.sell_currency || item.default_currency || null
+            add = convertCurrency(Number(item.sell_price)||0, cur, targetCur, settings)
+          }
         }
         if (!add) add = Number(m.value||0)
       }
@@ -165,8 +206,18 @@ export function computeLinePrice({ garmentKey, qty=1, measurements, fabricSource
   }
   if (optionsTotal === 0) {
     const naive = priceOptionSelections(opts, invIdx)
-    optionsTotal = naive.total
-    optionHits.push(...naive.hits)
+    // Convert naive hits to target currency if items had their own currencies
+    let convTotal = 0
+    const convHits = []
+    for (const h of naive.hits) {
+      const item = invIdx.bySku.get(String(h.sku||'').toLowerCase()) || invIdx.byName.get(String(h.selection||'').toLowerCase()) || null
+      const cur = item?.sell_currency || item?.default_currency || null
+      const p = convertCurrency(Number(h.price)||0, cur, targetCur, settings)
+      convTotal += p
+      convHits.push({ ...h, price: p })
+    }
+    optionsTotal = convTotal
+    optionHits.push(...convHits)
   }
 
   // Handling fees

@@ -337,57 +337,34 @@ export default function Orders() {
     } catch {}
   }
 
-  // Compute pricing using active Price Book with fabric auto-resolve; fallback to simple defaults
+  // Compute pricing using Inventory-derived base price and optional fabric/options
   const computeTotals = (pricing, invoiceSettings, order) => {
     try {
-      if (priceBook) {
-        const gKey = String(order?.items?.garment_category || 'thobe').toLowerCase()
-        const qty = Number(order?.items?.quantity || 1)
-        // Try to resolve shop fabric from order options or explicit fabric_sku_id
-        const opts = order?.items?.options || {}
-        let fabricItem = null
-        if (order?.items?.fabric_sku_id) {
-          fabricItem = inventoryItems.find(i => i.id === order.items.fabric_sku_id) || null
-        }
-        if (!fabricItem && inventoryItems?.length) {
-          const keys = ['fabric','fabric_type','fabric_name','material','cloth']
-          let name = null
-          for (const k of keys) {
-            const v = opts[k]
-            if (Array.isArray(v) && v.length) { name = v[0]; break }
-            if (v != null) { name = v; break }
-          }
-          if (name) fabricItem = inventoryItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
-        }
-        const fabricSource = fabricItem ? 'shop' : 'walkin'
-        const walkUnit = Number(priceBook?.fabrics_walkin?.default_unit_price || 0)
-        const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: null, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: opts, inventoryItems, priceBook, settings: invoiceCfg })
-        const totals = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
-        return { lineItems: [], subtotal: totals.subtotal, tax: totals.tax, total: totals.total, taxRate: invoiceCfg.vat_percent }
+      const gKey = String(order?.items?.garment_category || 'thobe').toLowerCase()
+      const qty = Number(order?.items?.quantity || 1)
+      const opts = order?.items?.options || {}
+      let fabricItem = null
+      if (order?.items?.fabric_sku_id) {
+        fabricItem = inventoryItems.find(i => i.id === order.items.fabric_sku_id) || null
       }
+      if (!fabricItem && inventoryItems?.length) {
+        const keys = ['fabric','fabric_type','fabric_name','material','cloth']
+        let name = null
+        for (const k of keys) {
+          const v = opts[k]
+          if (Array.isArray(v) && v.length) { name = v[0]; break }
+          if (v != null) { name = v; break }
+        }
+        if (name) fabricItem = inventoryItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
+      }
+      const fabricSource = fabricItem ? 'shop' : 'walkin'
+      const walkUnit = 0
+      const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: null, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: opts, inventoryItems, priceBook: {}, settings: invoiceCfg })
+      const totals = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
+      return { lineItems: [], subtotal: totals.subtotal, tax: totals.tax, total: totals.total, taxRate: invoiceCfg.vat_percent }
     } catch {}
-    // Fallback to simple defaults
-    const q = order?.items?.quantities || {}
-    const garments = Array.isArray(pricing?.garments) ? pricing.garments : []
-    const findPrice = (name, fallback) => {
-      const g = garments.find(g => String(g.name||'').trim().toLowerCase() === String(name||'').trim().toLowerCase())
-      return g && g.price != null ? Number(g.price) : (fallback != null ? Number(fallback) : 0)
-    }
-    const pThobe = findPrice('thobe', pricing?.thobe_price)
-    const pSirwal = findPrice('sirwal', pricing?.sirwal_price)
-    const pFalina = findPrice('falina', pricing?.falina_price)
-    const qtyThobe = Number(order?.items?.quantity || 0) || (Number(q.thobe||0) + Number(q.thobe_extras||0))
-    const qtySirwal = Number(q.sirwal_falina||0)
-    const qtyFalina = 0
-    const lineItems = []
-    if (qtyThobe > 0) lineItems.push({ name: 'Thobe', qty: qtyThobe, unit_price: pThobe, amount: qtyThobe * pThobe })
-    if (qtySirwal > 0) lineItems.push({ name: 'Sirwal', qty: qtySirwal, unit_price: pSirwal, amount: qtySirwal * pSirwal })
-    if (qtyFalina > 0) lineItems.push({ name: 'Falina', qty: qtyFalina, unit_price: pFalina, amount: qtyFalina * pFalina })
-    const subtotal = lineItems.reduce((s, it) => s + Number(it.amount||0), 0)
-    const taxRate = Number(invoiceSettings?.tax_rate||0)
-    const tax = subtotal * (taxRate/100)
-    const total = subtotal + tax
-    return { lineItems, subtotal, tax, total, taxRate }
+    // If anything fails, fallback to zeroed totals
+    return { lineItems: [], subtotal: 0, tax: 0, total: 0, taxRate: Number(invoiceSettings?.tax_rate||0) }
   }
 
   async function issueInvoice(o){
@@ -421,6 +398,54 @@ export default function Orders() {
       const thKey = buildMeasurementKey(bizMeta, metaCust, 'thobe', { orderId: o.id })
       const sfKey = buildMeasurementKey(bizMeta, metaCust, 'sirwal_falina', { orderId: o.id })
 
+      // Ensure inventory items are available for pricing (including garment variant current prices)
+      let invItems = inventoryItems
+      try {
+        if (!Array.isArray(invItems) || invItems.length === 0) {
+          const [{ data: it }, { data: vrows }] = await Promise.all([
+            supabase
+              .from('inventory_items')
+              .select('id, sku, name, category, sell_price, sell_currency, price, unit_price, retail_price, default_price, sell_unit_price, uom_base, default_currency')
+              .eq('business_id', ids.business_id)
+              .order('name'),
+            supabase
+              .from('v_items_with_current_prices')
+              .select('item_id, item_name, category, is_variant, variant_name, price, currency')
+              .eq('business_id', ids.business_id)
+          ])
+          let base = Array.isArray(it) ? it : []
+          // Map variant price rows to synthetic items so pricing engine can consider them as base candidates
+          const synth = (vrows||[]).filter(r => r.is_variant && r.price != null).map(r => ({
+            id: `var-${r.item_id}-${r.variant_name||'base'}`,
+            sku: null,
+            name: r.variant_name || r.item_name,
+            category: r.category || '',
+            sell_price: Number(r.price),
+            sell_currency: r.currency,
+            uom_base: 'unit',
+            default_currency: r.currency,
+          }))
+          invItems = [...base, ...synth]
+        } else {
+          // Even if we already have inventory items, fetch variant current prices and merge
+          const { data: vrows } = await supabase
+            .from('v_items_with_current_prices')
+            .select('item_id, item_name, category, is_variant, variant_name, price, currency')
+            .eq('business_id', ids.business_id)
+          const synth = (vrows||[]).filter(r => r.is_variant && r.price != null).map(r => ({
+            id: `var-${r.item_id}-${r.variant_name||'base'}`,
+            sku: null,
+            name: r.variant_name || r.item_name,
+            category: r.category || '',
+            sell_price: Number(r.price),
+            sell_currency: r.currency,
+            uom_base: 'unit',
+            default_currency: r.currency,
+          }))
+          invItems = [...invItems, ...synth]
+        }
+      } catch {}
+
       // Compute totals using pricing engine with snapshots and fabric auto-resolve
       let totals
       try {
@@ -429,8 +454,8 @@ export default function Orders() {
         const mVals = gKey === 'sirwal' || gKey === 'falina' ? (sfSnap || thSnap) : (thSnap || sfSnap)
         const optionsSel = mVals?.options || o?.items?.options || null
         let fabricItem = null
-        if (o?.items?.fabric_sku_id) fabricItem = inventoryItems.find(i => i.id === o.items.fabric_sku_id) || null
-        if (!fabricItem && optionsSel && inventoryItems?.length) {
+        if (o?.items?.fabric_sku_id) fabricItem = invItems.find(i => i.id === o.items.fabric_sku_id) || null
+        if (!fabricItem && optionsSel && invItems?.length) {
           const keys = ['fabric','fabric_type','fabric_name','material','cloth']
           let name = null
           for (const k of keys) {
@@ -438,11 +463,11 @@ export default function Orders() {
             if (Array.isArray(v) && v.length) { name = v[0]; break }
             if (v != null) { name = v; break }
           }
-          if (name) fabricItem = inventoryItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
+          if (name) fabricItem = invItems.find(it => String(it.name||'').toLowerCase() === String(name).toLowerCase()) || null
         }
         const fabricSource = fabricItem ? 'shop' : 'walkin'
         const walkUnit = Number(priceBook?.fabrics_walkin?.default_unit_price || 0)
-        const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: mVals, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: optionsSel, inventoryItems, priceBook, settings: invoiceCfg })
+        const priced = computeLinePrice({ garmentKey: gKey, qty, measurements: mVals, fabricSource, walkInUnitPrice: fabricSource==='walkin'?walkUnit:0, walkInTotal: 0, fabricSkuItem: fabricItem, optionSelections: optionsSel, inventoryItems: invItems, priceBook, settings: invoiceCfg })
         const t = computeInvoiceTotals({ lines: [priced], vatPercent: invoiceCfg.vat_percent, rounding: invoiceCfg.rounding, currency: invoiceCfg.currency })
         const unitPrice = qty > 0 ? Number((priced.subtotal || 0) / qty) : Number(priced.subtotal || 0)
         const displayName = gKey === 'sirwal' || gKey === 'falina' ? 'Sirwal' : 'Thobe'

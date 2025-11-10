@@ -142,7 +142,7 @@ const resources = {
       orders: 'Orders',
       'job cards': 'Job Cards',
       invoices: 'Invoices',
-      inventory: 'Inventory',
+      inventory: 'Inventory & Price',
       staff: 'Staff',
       expenses: 'Expenses',
       reports: 'Reports',
