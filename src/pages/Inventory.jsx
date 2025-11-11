@@ -32,7 +32,7 @@ const labelToCode = (label) => CURRENCIES.find(c => c.label === label)?.code || 
 
 export default function Inventory() {
   const canView = useCan('inventory', 'view');
-  const [ids, setIds] = useState({ business_id: null, user_id: null, users_app_id: null });
+  const [ids, setIds] = useState({ business_id: null, user_id: null, users_app_id: null, email: null });
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
   const [stock, setStock] = useState([]);
@@ -67,6 +67,8 @@ export default function Inventory() {
   const [pricingFilter, setPricingFilter] = useState('all'); // all|variants|items
   const [batchPrice, setBatchPrice] = useState('');
   const [batchCurrency, setBatchCurrency] = useState('SAR');
+  // Inventory settings (e.g., default location)
+  const [inventorySettings, setInventorySettings] = useState({ default_location_id: null });
   // Walk-in fabric default unit price (for Price Book)
   const [walkInDefaultUnit, setWalkInDefaultUnit] = useState(0);
   // Receive / Adjust modals
@@ -93,13 +95,57 @@ export default function Inventory() {
       const { data: sess } = await supabase.auth.getSession();
       const user = sess?.session?.user;
       if (!user) return;
-      const { data: ua } = await supabase
+      // Fetch all business links for this auth user
+      const { data: rows } = await supabase
         .from('users_app')
         .select('id, business_id')
         .eq('auth_user_id', user.id)
-        .maybeSingle();
-      if (ua?.business_id) {
-        setIds({ business_id: ua.business_id, user_id: user.id, users_app_id: ua.id });
+        .order('created_at', { ascending: false });
+      const list = Array.isArray(rows) ? rows.filter(r => r?.business_id) : [];
+      if (list.length === 0) return;
+      let chosen = list[0];
+      try {
+        if (list.length > 1) {
+          const idsList = list.map(r => r.business_id);
+          // Query counts per business to choose the one that has items
+          const { data: counts } = await supabase
+            .from('inventory_items')
+            .select('business_id, count:id')
+            .in('business_id', idsList)
+            .group('business_id');
+          const best = (counts || []).reduce((acc, row) => {
+            const c = Number(row?.count || 0);
+            if (!acc || c > acc.cnt) return { bid: row.business_id, cnt: c };
+            return acc;
+          }, null);
+          if (best && idsList.includes(best.bid)) {
+            const found = list.find(r => r.business_id === best.bid);
+            if (found) chosen = found;
+          }
+        }
+      } catch {}
+      if (chosen?.business_id) {
+        // Ensure there is a users_app link for THIS auth user to the chosen business (for RLS)
+        let linkId = chosen.id;
+        try {
+          const { data: link } = await supabase
+            .from('users_app')
+            .select('id')
+            .eq('auth_user_id', user.id)
+            .eq('business_id', chosen.business_id)
+            .maybeSingle();
+          if (!link?.id) {
+            const { data: createdLink } = await supabase
+              .from('users_app')
+              .insert([{ auth_user_id: user.id, business_id: chosen.business_id, email: user.email || null }])
+              .select('id')
+              .single();
+            if (createdLink?.id) linkId = createdLink.id;
+          } else {
+            linkId = link.id;
+          }
+        } catch {}
+        setIds({ business_id: chosen.business_id, user_id: user.id, users_app_id: linkId, email: user.email || null });
       }
     };
 
@@ -199,6 +245,20 @@ export default function Inventory() {
       setSellingItems(prev => [inserted, ...(prev||[])])
       setSiAddOpen(false); setSiName(''); setSiPrice(''); setSiType('garment')
     } catch (e) { alert(e?.message || 'Failed to save') }
+  }
+
+  const handleSiDelete = async (row) => {
+    if (!window.confirm(`Delete ${row.name}? This cannot be undone.`)) return
+    try {
+      const { error } = await supabase
+        .from('selling_items')
+        .delete()
+        .eq('id', row.id)
+      if (error) throw error
+      setSellingItems(prev => (prev || []).filter(r => r.id !== row.id))
+    } catch (e) {
+      alert(e?.message || 'Failed to delete')
+    }
   }
 
   // Save a price change inline from the grid
@@ -387,18 +447,17 @@ export default function Inventory() {
             .order('name'),
           supabase
             .from('inventory_transactions')
-            .select('*')
+            .select('id, business_id, item_id, type, qty, uom, unit_cost, currency, location_id, supplier_id, created_at')
             .eq('business_id', ids.business_id)
-            .eq('type', 'receipt')
             .order('created_at', { ascending: false }),
           (async () => {
-            if (!ids.users_app_id) return null;
+            if (!ids.users_app_id) return { data: null };
             const { data } = await supabase
               .from('user_settings')
-              .select('pricing_settings, invoice_settings')
+              .select('pricing_settings, invoice_settings, inventory_settings')
               .eq('user_id', ids.users_app_id)
               .maybeSingle();
-            return data || null;
+            return { data: data || null };
           })(),
           supabase
             .from('item_cost_hints')
@@ -407,6 +466,34 @@ export default function Inventory() {
         ]);
         
         setItems(it || []);
+        // Auto-correct business selection if this business has zero items but another linked business has items
+        try {
+          const countNow = Array.isArray(it) ? it.length : 0;
+          if (countNow === 0 && ids.user_id) {
+            const { data: uaList } = await supabase
+              .from('users_app')
+              .select('id, business_id')
+              .eq('auth_user_id', ids.user_id);
+            const bids = (uaList || []).map(r => r.business_id).filter(Boolean);
+            if (bids.length > 0) {
+              const { data: counts } = await supabase
+                .from('inventory_items')
+                .select('business_id, count:id')
+                .in('business_id', bids)
+                .group('business_id');
+              const best = (counts || []).reduce((acc, row) => {
+                const c = Number(row?.count || 0);
+                if (!acc || c > acc.cnt) return { bid: row.business_id, cnt: c };
+                return acc;
+              }, null);
+              if (best && best.cnt > 0 && best.bid && best.bid !== ids.business_id) {
+                setIds(prev => ({ ...prev, business_id: best.bid }));
+                return; // let effect re-run with corrected business
+              }
+            }
+          }
+        } catch {}
+        try { console.log('Inventory debug:', { business_id: ids.business_id, user_email: ids.email, items_count: (it||[]).length }); } catch {}
         setStock(st || []);
         // Merge true last cost with hints (only when missing)
         try {
@@ -422,10 +509,11 @@ export default function Inventory() {
         setLocations(locs || []);
         setSuppliers(sups || []);
         setReceipts(rec || []);
-        // Hydrate pricing settings
+        // Hydrate pricing and inventory settings
         try {
           const ps = us?.pricing_settings || {};
           const inv = us?.invoice_settings || {};
+          const invset = us?.inventory_settings || {};
           // Always keep these states as labels to match Settings dropdowns
           const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR')
           setPricingCurrency(invCurLabel);
@@ -439,6 +527,7 @@ export default function Inventory() {
           setMarkupPct(ps?.inventory_markup_pct ?? '');
           setPromotions(Array.isArray(ps?.promotions) ? ps.promotions : []);
           setGarments(Array.isArray(ps?.garments) ? ps.garments : []);
+          setInventorySettings({ default_location_id: invset?.default_location_id || null });
           setPricingLoaded(true);
         } catch {}
 
@@ -452,9 +541,10 @@ export default function Inventory() {
               .in('item_id', itemIds);
             const map = new Map();
             for (const row of (vp || [])) {
-              const prev = map.get(row.item_id);
+              const key = String(row.item_id);
+              const prev = map.get(key);
               if (!prev || (row.price != null && Number(row.price) < Number(prev.price))) {
-                map.set(row.item_id, { price: Number(row.price), currency: row.currency });
+                map.set(key, { price: Number(row.price), currency: row.currency });
               }
             }
             setVariantPriceByItem(map);
@@ -479,11 +569,12 @@ export default function Inventory() {
       try {
         const { data } = await supabase
           .from('user_settings')
-          .select('pricing_settings, invoice_settings')
+          .select('pricing_settings, invoice_settings, inventory_settings')
           .eq('user_id', ids.users_app_id)
           .maybeSingle();
         const ps = data?.pricing_settings || {};
         const inv = data?.invoice_settings || {};
+        const invset = data?.inventory_settings || {};
         const invCurLabel = inv?.currency || codeToLabel(ps?.currency || 'SAR');
         setPricingCurrency(invCurLabel);
         setBatchCurrency(labelToCode(invCurLabel));
@@ -493,9 +584,56 @@ export default function Inventory() {
         setMarkupPct(ps?.inventory_markup_pct ?? '');
         setPromotions(Array.isArray(ps?.promotions) ? ps.promotions : []);
         setGarments(Array.isArray(ps?.garments) ? ps.garments : []);
+        setInventorySettings({ default_location_id: invset?.default_location_id || null });
       } catch {}
     })();
   }, [ids.users_app_id]);
+
+  // Helper: ensure a default location exists and return its id
+  const ensureDefaultLocation = async () => {
+    try {
+      // If user has a default set and it exists in current locations, use it
+      if (inventorySettings?.default_location_id) {
+        const exists = (locations || []).some(l => l.id === inventorySettings.default_location_id);
+        if (exists) return inventorySettings.default_location_id;
+      }
+      // If there are locations, pick the first; also save as default for user
+      if ((locations || []).length > 0) {
+        const firstId = locations[0].id;
+        if (ids.users_app_id) {
+          try {
+            await supabase
+              .from('user_settings')
+              .update({ inventory_settings: { default_location_id: firstId } })
+              .eq('user_id', ids.users_app_id);
+          } catch {}
+        }
+        setInventorySettings({ default_location_id: firstId });
+        return firstId;
+      }
+      // No locations: create "Main"
+      const { data: createdLoc, error: locErr } = await supabase
+        .from('inventory_locations')
+        .insert([{ business_id: ids.business_id, name: 'Main' }])
+        .select('*')
+        .single();
+      if (locErr) throw locErr;
+      setLocations(prev => [...(prev || []), createdLoc]);
+      // Save as default in user settings
+      if (ids.users_app_id) {
+        try {
+          await supabase
+            .from('user_settings')
+            .update({ inventory_settings: { default_location_id: createdLoc.id } })
+            .eq('user_id', ids.users_app_id);
+        } catch {}
+      }
+      setInventorySettings({ default_location_id: createdLoc.id });
+      return createdLoc.id;
+    } catch {
+      return null;
+    }
+  };
 
   // Live-sync pricing currency with Settings invoice currency updates
   useEffect(() => {
@@ -529,26 +667,31 @@ export default function Inventory() {
   const stockByItem = useMemo(() => {
     const map = new Map();
     for (const row of stock) {
-      const cur = map.get(row.item_id) || { total: 0, byLoc: {} };
+      const key = String(row.item_id);
+      const cur = map.get(key) || { total: 0, byLoc: {} };
       const q = Number(row.qty_on_hand) || 0;
       cur.total += q;
       cur.byLoc[row.location_id] = (cur.byLoc[row.location_id] || 0) + q;
-      map.set(row.item_id, cur);
+      map.set(key, cur);
     }
     return map;
   }, [stock]);
 
   const lastCostByItem = useMemo(() => {
     const map = new Map();
-    for (const row of lastCost || []) map.set(row.item_id, row);
+    for (const row of lastCost || []) map.set(String(row.item_id), row);
     return map;
   }, [lastCost]);
 
   const receivedByItem = useMemo(() => {
     const map = new Map();
     for (const r of receipts || []) {
-      const cur = map.get(r.item_id) || 0;
-      map.set(r.item_id, cur + (Number(r.qty || 0)));
+      const key = String(r.item_id);
+      const cur = map.get(key) || 0;
+      let delta = Number(r.qty || 0);
+      // If other transaction types are introduced (e.g., 'issue'), subtract
+      if (String(r.type || '').toLowerCase() === 'issue') delta = -Math.abs(delta);
+      map.set(key, cur + delta);
     }
     return map;
   }, [receipts]);
@@ -653,7 +796,8 @@ export default function Inventory() {
     try {
       if (!ids.business_id) throw new Error('Missing business_id');
       const skipClose = !!data?.__skipClose;
-      // Remove helper-only fields that don't belong to inventory_items
+      // Extract helper-only fields; keep initial_stock to create a receipt if provided
+      const initialStock = data?.initial_stock || null;
       const clean = (() => { const { __skipClose, initial_stock, ...rest } = data || {}; return rest; })();
       if (itemId) {
         const { data: updated, error } = await supabase
@@ -667,13 +811,37 @@ export default function Inventory() {
         if (!skipClose) setAddOpen(false);
         return updated?.id || itemId;
       } else {
+        // Set current_stock directly from initial stock qty if provided
+        const initQtyNum = initialStock && (Number(initialStock.qty) || 0) > 0 ? Number(initialStock.qty) || 0 : 0;
+        const cleanWithStock = { ...clean, current_stock: initQtyNum };
         const { data: created, error } = await supabase
           .from('inventory_items')
-          .insert([{ ...clean, business_id: ids.business_id }])
+          .insert([{ ...cleanWithStock, business_id: ids.business_id }])
           .select('*')
           .single();
         if (error) throw error;
         setItems(prev => [...prev, created]);
+        // If initial unit cost provided, save/update a cost hint so Cost/Profit show without receipts
+        if (initialStock && (initialStock.unit_cost != null)) {
+          const unitCostNum = Number(initialStock.unit_cost);
+          const cur = initialStock.currency || (created.default_currency || 'KWD');
+          try {
+            await supabase
+              .from('item_cost_hints')
+              .delete()
+              .eq('business_id', ids.business_id)
+              .eq('item_id', created.id);
+          } catch {}
+          try {
+            await supabase
+              .from('item_cost_hints')
+              .insert([{ business_id: ids.business_id, item_id: created.id, unit_cost: unitCostNum, currency: cur }]);
+          } catch {}
+          setLastCost(prev => {
+            const others = (prev || []).filter(r => r.item_id !== created.id);
+            return [{ item_id: created.id, unit_cost: unitCostNum, currency: cur, business_id: ids.business_id }, ...others];
+          });
+        }
         if (!skipClose) setAddOpen(false);
         return created?.id;
       }
@@ -729,6 +897,13 @@ export default function Inventory() {
         .select('*')
         .single();
       if (error) throw error;
+      // Update item's current_stock
+      try {
+        await supabase
+          .from('inventory_items')
+          .update({ current_stock: (Number(receiveItem.current_stock || 0) + (Number(qty) || 0)) })
+          .eq('id', receiveItem.id);
+      } catch {}
       // Optimistic updates
       // Update stock
       setStock(prev => {
@@ -745,6 +920,8 @@ export default function Inventory() {
       });
       // Update receipts aggregation source
       setReceipts(prev => [{ ...inserted }, ...(prev || [])]);
+      // Update items list current_stock locally
+      setItems(prev => prev.map(i => i.id === receiveItem.id ? ({ ...i, current_stock: Number(i.current_stock || 0) + (Number(qty) || 0) }) : i));
       // Update last cost
       setLastCost(prev => {
         const others = (prev || []).filter(r => r.item_id !== receiveItem.id);
@@ -786,6 +963,13 @@ export default function Inventory() {
         .select('*')
         .single();
       if (error) throw error;
+      // Update item's current_stock
+      try {
+        await supabase
+          .from('inventory_items')
+          .update({ current_stock: (Number(adjustItem.current_stock || 0) + (Number(qty) || 0)) })
+          .eq('id', adjustItem.id);
+      } catch {}
       // Optimistic stock update
       setStock(prev => {
         const next = [...(prev || [])];
@@ -799,6 +983,8 @@ export default function Inventory() {
         }
         return next;
       });
+      // Update items list current_stock locally
+      setItems(prev => prev.map(i => i.id === adjustItem.id ? ({ ...i, current_stock: Number(i.current_stock || 0) + (Number(qty) || 0) }) : i));
       setAdjustOpen(false); setAdjustItem(null);
     } catch (e) {
       console.error('adjust save failed', e);
@@ -940,6 +1126,14 @@ export default function Inventory() {
                       <td className="px-3 py-2 text-right">
                         <button className="px-2 py-1 text-white/80 bg-white/10 border border-white/15 rounded mr-2" disabled>Edit</button>
                         <button className="px-2 py-1 text-red-300 bg-red-500/10 border border-red-400/30 rounded" disabled>Deactivate</button>
+                        <PermissionGate module="inventory" action="delete">
+                          <button
+                            onClick={() => handleSiDelete(row)}
+                            className="px-2 py-1 rounded bg-red-600/80 text-white hover:bg-red-600"
+                          >
+                            Delete
+                          </button>
+                        </PermissionGate>
                       </td>
                     </tr>
                   ))}
@@ -1003,11 +1197,10 @@ export default function Inventory() {
                 ))}
               </select>
               <button
-                onClick={() => setTab(TABS.PRICING)}
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 active:bg-white/20 text-white transition-colors shadow-sm hover:shadow ring-1 ring-inset ring-white/10 active:ring-white/20"
-                title="Open Pricing Management"
+                onClick={() => {}}
+                className="hidden"
+                title=""
               >
-                Pricing Management
               </button>
               <PermissionGate module="inventory" action="create">
                 <button
@@ -1049,72 +1242,7 @@ export default function Inventory() {
           </div>
         )}
 
-        {tab === TABS.PRICING && (
-          <div className="text-white/90 space-y-4">
-            <div className="text-lg font-semibold">Pricing Management</div>
-            <div className="text-white/70 text-sm">Manage prices for all items and garment variants. Currency comes from Settings → Invoice.</div>
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-slate-300">{pbNotice}</div>
-              <div className="text-xs text-slate-400">{pricingLoadingGrid ? 'Loading…' : ''}</div>
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <div className="flex items-center gap-2">
-                <label className="text-white/70">Filter:</label>
-                <select value={pricingFilter} onChange={(e)=> setPricingFilter(e.target.value)} className="rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
-                  <option value="all">All</option>
-                  <option value="variants">Variants</option>
-                  <option value="items">Items (non-garments)</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-white/70">Batch price for visible variants:</label>
-                <input type="number" step="0.01" value={batchPrice} onChange={(e)=> setBatchPrice(e.target.value)} placeholder="e.g. 120" className="w-28 rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
-                <select value={codeToLabel(batchCurrency)} onChange={(e)=> setBatchCurrency(labelToCode(e.target.value))} className="w-64 rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
-                  {CURRENCIES.map(c => (<option key={c.code} value={c.label}>{c.label}</option>))}
-                </select>
-                <button className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleApplyPriceToVisibleVariants}>Apply</button>
-              </div>
-            </div>
-            <div className="overflow-auto rounded-lg border border-white/10">
-              <table className="min-w-full text-sm">
-                <thead className="bg-white/5">
-                  <tr className="text-left text-white/70">
-                    <th className="py-2 px-3">SKU</th>
-                    <th className="py-2 px-3">Item</th>
-                    <th className="py-2 px-3">Category</th>
-                    <th className="py-2 px-3">Variant</th>
-                    <th className="py-2 px-3">Price</th>
-                    <th className="py-2 px-3">Currency</th>
-                    <th className="py-2 px-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(pricingRows||[]).filter(r => (pricingFilter === 'variants' ? r.is_variant : pricingFilter === 'items' ? !r.is_variant : true)).map((r) => (
-                    <tr key={`${r.item_id}-${r.variant_id||'base'}`} className="border-t border-white/10 text-white/85">
-                      <td className="py-2 px-3">{r.sku || '—'}</td>
-                      <td className="py-2 px-3">{r.item_name}</td>
-                      <td className="py-2 px-3 capitalize">{r.category || '—'}</td>
-                      <td className="py-2 px-3">{r.is_variant ? (r.variant_name || '—') : '—'}</td>
-                      <td className="py-2 px-3">
-                        <input type="number" step="0.01" defaultValue={r.price ?? ''} onBlur={(e)=> handleSavePriceInline(r, e.target.value, codeToLabel(r.currency))} className="w-32 rounded bg-white/5 border border-white/15 px-2 py-1 text-white" />
-                      </td>
-                      <td className="py-2 px-3">
-                        <select defaultValue={codeToLabel(r.currency)} onChange={(e)=> handleSavePriceInline(r, (document.activeElement && document.activeElement.type==='number') ? document.activeElement.value : (r.price ?? ''), e.target.value)} className="w-64 rounded bg-white/5 border border-white/15 px-2 py-1 text-white select-light">
-                          {CURRENCIES.map(c => (<option key={c.code} value={c.label}>{c.label}</option>))}
-                        </select>
-                      </td>
-                      <td className="py-2 px-3 space-x-2">
-                        <button className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white" onClick={()=> handlePricingEdit(r)}>Edit</button>
-                        <button className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=> handleSavePriceInline(r, r.price ?? '', codeToLabel(r.currency))}>Save</button>
-                        <button className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white" onClick={()=> handlePricingDelete(r)}>Delete</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        {tab === TABS.PRICING && null}
       </div>
     </div>
     <ItemManager

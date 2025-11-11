@@ -245,8 +245,8 @@ export default function ItemManager({ open = false, onClose, onSaved, initial = 
       if (!initial?.id) {
         const qtyNum = initQty === '' ? 0 : Number(initQty);
         const costNum = initUnitCost === '' ? null : Number(initUnitCost);
-        const locId = initLocation || '';
-        if (qtyNum > 0 && costNum != null && locId) {
+        const locId = initLocation || null;
+        if (qtyNum > 0 && costNum != null) {
           initial_stock = {
             supplier_id: initSupplier || null,
             location_id: locId,

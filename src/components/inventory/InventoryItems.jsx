@@ -39,7 +39,7 @@ export default function InventoryItems({
             <th className="py-2 pr-3">Name</th>
             <th className="py-2 pr-3">Category</th>
             <th className="py-2 pr-3">UOM</th>
-            <th className="py-2 pr-3">On Hand</th>
+            <th className="py-2 pr-3">Stock</th>
             <th className="py-2 pr-3">Cost</th>
             <th className="py-2 pr-3">Sell Price (per unit)</th>
             <th className="py-2 pr-3">Profit (per unit)</th>
@@ -49,17 +49,22 @@ export default function InventoryItems({
         </thead>
         <tbody>
           {items.map((it) => {
-            const st = stockByItem.get(it.id) || { total: 0 };
-            const lc = lastCostByItem.get(it.id);
+            const key = String(it.id);
+            const st = stockByItem.get(key);
+            const lc = lastCostByItem.get(key);
             const cost = lc?.unit_cost ?? 0;
-            const value = (Number(st.total || 0) * Number(cost || 0));
-            const received = receivedByItem.get(it.id) || 0;
-            const left = Number(st.total || 0);
+            const received = receivedByItem.get(key) || 0;
+            const left = (it.current_stock != null)
+              ? Number(it.current_stock)
+              : ((Number(received || 0) > 0)
+                ? Number(received || 0)
+                : ((st && typeof st.total !== 'undefined') ? Number(st.total || 0) : 0));
+            const value = (Number(left || 0) * Number(cost || 0));
             const statusColor = left === 0 ? 'text-red-300' : (left < Number(received || 0) ? 'text-amber-300' : 'text-emerald-300');
             const curRaw = (lc?.currency ?? it.default_currency ?? '').toString();
             const curLabel = ['KWD','USD','SAR','AED','BHD','QAR','OMR'].includes(curRaw) ? codeToLabel(curRaw) : curRaw;
             // Prefer base sell price; if missing, fall back to variant current min price
-            const vSummary = variantPriceByItem?.get(it.id) || null;
+            const vSummary = variantPriceByItem?.get(key) || null;
             const baseHasSell = (it.sell_price != null && it.sell_price !== '');
             const sellPriceNum = baseHasSell ? Number(it.sell_price) : (vSummary && vSummary.price != null ? Number(vSummary.price) : null);
             const sellCurCode = (baseHasSell ? (it.sell_currency || it.default_currency || '') : (vSummary?.currency || it.default_currency || '')).toString();
@@ -131,13 +136,19 @@ export default function InventoryItems({
             byCat: {}, // { category: { onHand, costByCur, sellByCur, profitByCur } }
           };
           for (const it of (items || [])) {
-            const st = stockByItem.get(it.id) || { total: 0 };
-            const onHand = Number(st.total || 0);
-            const lc = lastCostByItem.get(it.id);
+            const key = String(it.id);
+            const st = stockByItem.get(key);
+            const recQty = receivedByItem.get(key) || 0;
+            const onHand = (it.current_stock != null)
+              ? Number(it.current_stock)
+              : ((Number(recQty || 0) > 0)
+                ? Number(recQty || 0)
+                : ((st && typeof st.total !== 'undefined') ? Number(st.total || 0) : 0));
+            const lc = lastCostByItem.get(key);
             const cost = lc?.unit_cost;
             const costCur = (lc?.currency || it.default_currency || '').toString();
             // Prefer base sell; fall back to variant min current price
-            const vSummary = variantPriceByItem?.get(it.id) || null;
+            const vSummary = variantPriceByItem?.get(key) || null;
             const baseHasSell = (it.sell_price != null && it.sell_price !== '');
             const sell = baseHasSell ? it.sell_price : (vSummary?.price ?? null);
             const sellCur = (baseHasSell ? (it.sell_currency || it.default_currency || '') : (vSummary?.currency || it.default_currency || '')).toString();
@@ -251,7 +262,7 @@ export default function InventoryItems({
                     {Object.entries(agg.byCat).map(([cat, data]) => (
                       <div key={cat} className="p-2 rounded border border-white/10 bg-white/5">
                         <div className="text-white/85 font-medium text-sm mb-1">{cat}</div>
-                        <div className="text-white/70 text-xs mb-1">On Hand: {data.onHand.toFixed(0)}</div>
+                        <div className="text-white/70 text-xs mb-1">Stock: {data.onHand.toFixed(0)}</div>
                         <div className="flex flex-wrap gap-2 text-xs mb-1">
                           <span className="text-white/60">Cost:</span>
                           {renderCurChips(data.costByCur, 'text-sky-300')}
